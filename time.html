@@ -1,0 +1,1375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stage Time Projection</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.min.js"></script>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Share+Tech+Mono&family=VT323&family=Cinzel:wght@600&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --primary-color: #00f3ff;
+            --primary-color-rgb: 0, 243, 255;
+            --bg-color: #000;
+            --font-main: 'Courier New', Courier, monospace;
+        }
+        
+        body {
+            background-color: #000;
+            color: var(--primary-color);
+            font-family: var(--font-main);
+            margin: 0;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            perspective: 1000px;
+            transition: color 0.5s;
+            user-select: none;
+        }
+
+        body.projection-mode { cursor: none; }
+        body.projection-mode #controls, 
+        body.projection-mode #messageBox { display: none !important; }
+
+        /* --- GLOBAL FX LAYERS --- */
+        
+        /* Scanlines */
+        #fx-scanlines {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            background-size: 100% 4px, 6px 100%;
+            pointer-events: none; z-index: 90; opacity: 0; transition: opacity 0.5s;
+        }
+        #fx-scanlines.active { opacity: 1; }
+
+        /* Film Grain */
+        #fx-grain {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            opacity: 0; pointer-events: none; z-index: 89;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.15'/%3E%3C/svg%3E");
+            transition: opacity 0.5s;
+        }
+        #fx-grain.active { opacity: 1; animation: grainAnim 0.2s steps(10) infinite; }
+        
+        @keyframes grainAnim {
+            0%, 100% { transform: translate(0, 0); }
+            10% { transform: translate(-2%, -2%); }
+            20% { transform: translate(-2%, 2%); }
+            30% { transform: translate(2%, -2%); }
+            40% { transform: translate(2%, 2%); }
+            50% { transform: translate(-2%, 2%); }
+            60% { transform: translate(2%, -2%); }
+            70% { transform: translate(0, 2%); }
+            80% { transform: translate(-2%, 0); }
+            90% { transform: translate(2%, 0); }
+        }
+
+        /* Chromatic Aberration */
+        body.fx-chromatic .viz-element {
+            filter: drop-shadow(4px 0 rgba(255,0,0,0.6)) drop-shadow(-4px 0 rgba(0,0,255,0.6));
+        }
+        body.fx-chromatic #year-text {
+            text-shadow: 
+                4px 0 0 rgba(255,0,0,0.7), 
+                -4px 0 0 rgba(0,0,255,0.7),
+                0 0 30px rgba(var(--primary-color-rgb), 0.6) !important; 
+        }
+
+        /* Bloom */
+        body.fx-bloom #stage-display {
+            filter: brightness(1.2) blur(1px) contrast(1.1);
+        }
+
+        /* THEMES */
+        body.theme-cyan { --font-main: 'Courier New', Courier, monospace; }
+        body.theme-red { --font-main: 'Orbitron', sans-serif; }
+        body.theme-green { --primary-color: #00ff41; --primary-color-rgb: 0, 255, 65; --font-main: 'VT323', monospace; }
+        body.theme-clock { --primary-color: #d4af37; --primary-color-rgb: 212, 175, 55; --font-main: 'Cinzel', serif; }
+        body.theme-sun { --primary-color: #ffcc66; --primary-color-rgb: 255, 204, 102; --font-main: 'Share Tech Mono', monospace; }
+
+        #stage-display {
+            text-align: center; position: relative; z-index: 1;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            width: 100%; height: 100%;
+            opacity: 1;
+            transition: opacity 2s ease-in-out; 
+        }
+        
+        .stage-blackout { opacity: 0 !important; }
+
+        #year-text {
+            position: absolute; width: 100%; text-align: center; left: 0; top: 50%;
+            transform: translateY(-50%); 
+            font-size: 20vw; font-weight: bold; margin: 0; line-height: 1;
+            text-shadow: 0 0 30px rgba(var(--primary-color-rgb), 0.6);
+            z-index: 20; 
+            transition: top 0.5s ease, filter 0.5s ease-in; 
+        }
+        
+        #viz-container {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; justify-content: center; align-items: center;
+            pointer-events: none; overflow: hidden;
+        }
+        
+        .viz-element { display: none; width: 100%; height: 100%; position: absolute; }
+        
+        /* RINGS */
+        .ring-box {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%) translateY(100px);
+            width: 300px; height: 300px;
+            display: flex; justify-content: center; align-items: center;
+            transform-style: preserve-3d;
+            transition: opacity 1.5s ease-out;
+        }
+        .ring {
+            position: absolute; border-radius: 50%;
+            border: 4px solid rgba(var(--primary-color-rgb), 0.3);
+            border-top-color: var(--primary-color);
+            box-shadow: 0 0 15px rgba(var(--primary-color-rgb), 0.2);
+        }
+        body.theme-red .ring { border-radius: 10px; border-width: 8px; }
+        body.theme-green .ring { border-style: dashed; }
+        .ring-inner { width: 150px; height: 150px; }
+        .ring-outer { width: 250px; height: 250px; }
+
+        /* CLOCK */
+        #clock-viz-inner {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 500px; height: 500px;
+            border: 8px double var(--primary-color); border-radius: 50%;
+            box-shadow: 0 0 20px rgba(var(--primary-color-rgb), 0.3);
+            z-index: 10;
+        }
+        .roman-numeral {
+            position: absolute; color: var(--primary-color);
+            font-family: 'Cinzel', serif; font-weight: bold; font-size: 32px;
+            text-align: center; width: 50px; height: 50px; line-height: 50px; top: 50%; left: 50%;
+        }
+        .clock-face-marker {
+            position: absolute; width: 4px; height: 15px; background: var(--primary-color);
+            left: 50%; top: 10px; transform-origin: 50% 240px; 
+            display: none; /* Hidden by default */
+        }
+        .clock-hand {
+            position: absolute; top: 50%; left: 50%;
+            width: 6px; height: 200px; background: var(--primary-color);
+            transform-origin: 50% 100%; 
+            border-radius: 3px; transition: opacity 1.5s ease-out;
+        }
+        .clock-center-cap {
+            position: absolute; top: 50%; left: 50%; width: 20px; height: 20px;
+            background: var(--primary-color); border-radius: 50%; transform: translate(-50%, -50%);
+        }
+        #clock-gradient-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(to bottom, transparent 40%, rgba(0,0,0,0.8) 70%, #000 95%);
+            z-index: 15; pointer-events: none;
+        }
+
+        /* SUN */
+        #viz-sun { background: #000; }
+        #sun-orbit-container {
+            position: absolute; width: 100%; height: 100%;
+            top: 50%; left: 0; transform-origin: 50% 100%;
+            transform: rotate(-90deg); transition: opacity 1.5s ease-out;
+        }
+        .sun-orbit-active { animation: sunOrbitAnim 4s linear infinite; }
+        #sun-orb {
+            position: absolute; left: 50%; top: -350px; 
+            width: 120px; height: 120px;
+            background: radial-gradient(circle, #fff 10%, #ffcc00 40%, #ff4500 100%);
+            border-radius: 50%; transform: translateX(-50%); box-shadow: 0 0 50px #ff8c00;
+        }
+        #sky-glow {
+            position: absolute; width: 100%; height: 100%; top: 0; left: 0;
+            background: radial-gradient(circle at 50% 80%, rgba(135, 206, 235, 0.4) 0%, rgba(0,0,0,0) 70%);
+            opacity: 0.5; transition: opacity 1s;
+        }
+        #vignette {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: radial-gradient(circle, transparent 40%, black 90%); z-index: 10; pointer-events: none;
+        }
+
+        .warp-effect { filter: blur(2px); }
+        .fade-out { opacity: 0 !important; }
+
+        /* CONTROLS */
+        #controls {
+            position: fixed; top: 20px; left: 20px;
+            background: rgba(20, 20, 20, 0.95); padding: 20px; border-radius: 8px; z-index: 1000;
+            color: white; width: 280px; border: 1px solid #444; font-family: sans-serif;
+            max-height: 90vh; overflow-y: auto;
+        }
+        .input-group { margin-bottom: 12px; }
+        .input-group label { display: block; font-size: 11px; color: #aaa; margin-bottom: 4px; text-transform: uppercase; }
+        .input-group input[type="text"], 
+        .input-group input[type="number"], 
+        .input-group select, 
+        .input-group input[type="range"],
+        .input-group input[type="color"] { 
+            width: 100%; padding: 6px; background: #333; border: 1px solid #555; color: white; border-radius: 4px; box-sizing: border-box;
+        }
+        .checkbox-group { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+        .checkbox-group label { margin-bottom: 0; cursor: pointer; font-size: 11px; color: #aaa; text-transform: uppercase; }
+        .checkbox-group input { width: auto; cursor: pointer; transform: scale(1.2); }
+
+        .settings-sub-panel {
+            background: rgba(255,255,255,0.05); border-left: 2px solid var(--primary-color);
+            padding: 10px; margin-bottom: 10px; display: none;
+        }
+        .settings-sub-panel.visible { display: block; }
+        
+        #themeSpecificControls { background: rgba(0, 243, 255, 0.1); border-left: 2px solid #fff; }
+        #fxControls { background: rgba(255, 0, 255, 0.1); border-left: 2px solid #f0f; }
+
+        .btn-group { display: flex; gap: 8px; margin-top: 15px; }
+        button { flex: 1; padding: 10px; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; text-transform: uppercase; font-size: 11px; }
+        #btn-start { background: var(--primary-color); color: black; }
+        #btn-stop { background: #ff4757; color: white; }
+        #btn-reset { background: #57606f; color: white; }
+        #btn-fullscreen { background: #333; color: white; border: 1px solid #555; }
+        #btn-edit { background: #333; color: #aaa; border: 1px solid #555; }
+        #btn-edit.active { background: #00f3ff; color: #000; border-color: #00f3ff; }
+        #btn-export, #btn-import-trigger { background: #222; color: #bbb; border: 1px solid #444; }
+        #btn-export:hover, #btn-import-trigger:hover { background: #333; color: #fff; }
+
+        .hint { font-size: 10px; color: #888; text-align: center; margin-top: 15px; padding-top: 10px; border-top: 1px solid #444; }
+        #messageBox {
+            position: fixed; bottom: 30px; right: 30px; background: #111; color: #fff; padding: 15px;
+            border-left: 4px solid var(--primary-color); font-family: sans-serif; font-size: 14px;
+            display: none; z-index: 2000;
+        }
+
+        #mapping-controls { border-top: 1px solid #444; margin-top: 15px; padding-top: 10px; display: none; }
+        .edit-mode-active #mapping-controls { display: block; }
+        
+        #movable-stage {
+            position: relative; display: flex; flex-direction: column; justify-content: center; align-items: center;
+            transform-origin: center center; width: 100%; height: 100%;
+        }
+        .edit-mode-active #movable-stage { cursor: grab; border: 2px dashed rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.05); }
+        
+        .snap-guide { position: absolute; background: #00ff00; opacity: 0; pointer-events: none; z-index: 50; transition: opacity 0.1s; }
+        #snap-x { width: 1px; height: 100vh; left: 50%; top: 0; transform: translateX(-50%); }
+        #snap-y { width: 100vw; height: 1px; top: 50%; left: 0; transform: translateY(-50%); }
+        .snap-visible { opacity: 0.6 !important; }
+    </style>
+</head>
+<body class="theme-cyan">
+
+    <div id="fx-grain"></div>
+    <div id="fx-scanlines"></div>
+    <div id="snap-x" class="snap-guide"></div>
+    <div id="snap-y" class="snap-guide"></div>
+
+    <!-- CONTROLS -->
+    <div id="controls">
+        <h3 style="margin-top:0; font-size:14px; color:#ddd; text-align:center;">TIME CONTROL</h3>
+        
+        <div class="input-group">
+            <label>Visual Theme</label>
+            <select id="themeSelector">
+                <option value="cyan">Classic Rings (Cyan)</option>
+                <option value="red">Plasma Rings (Red)</option>
+                <option value="green">Matrix (Digital Green)</option>
+                <option value="clock">Antique Clock (Gold)</option>
+                <option value="sun">Sun Arc (Projection)</option>
+            </select>
+        </div>
+        
+        <!-- THEME SPECIFIC SETTINGS -->
+        <div id="themeSpecificControls" class="settings-sub-panel visible">
+            <h4 style="margin: 0 0 10px 0; font-size: 10px; color: #aaa; text-transform:uppercase; border-bottom: 1px solid #555; padding-bottom: 5px;">Theme Options</h4>
+            
+            <!-- For Rings -->
+            <div id="ringControls" style="display:none;">
+                <div class="input-group">
+                    <label>Ring Vertical Offset</label>
+                    <input type="range" id="ringOffsetSlider" min="0" max="400" value="100">
+                </div>
+                <div class="input-group">
+                    <label>Primary Color</label>
+                    <input type="color" id="themeColorPicker" value="#00f3ff" style="height:30px; cursor:pointer;">
+                </div>
+            </div>
+
+            <!-- For Sun -->
+            <div id="sunControls" style="display:none;">
+                <div class="input-group">
+                    <label>Sun Cycle Speed: <span id="sunSpeedVal">1.0</span>x</label>
+                    <input type="range" id="sunSpeedSlider" min="0.1" max="5.0" step="0.1" value="1.0">
+                </div>
+                <div class="input-group">
+                    <label title="Speed up the sun when below horizon">Night Speedup: <span id="nightSpeedVal">1.0</span>x</label>
+                    <input type="range" id="nightSpeedSlider" min="1.0" max="10.0" step="0.5" value="1.0">
+                </div>
+            </div>
+            
+            <!-- For Clock -->
+            <div id="clockControls" style="display:none;">
+                 <div class="input-group">
+                    <label>Clock Color</label>
+                    <input type="color" id="clockColorPicker" value="#d4af37" style="height:30px; cursor:pointer;">
+                </div>
+                <div class="checkbox-group">
+                    <label for="clockTicksCheck">Show Ticks</label>
+                    <input type="checkbox" id="clockTicksCheck">
+                </div>
+            </div>
+        </div>
+        
+        <!-- VISUAL FX -->
+        <div class="checkbox-group">
+            <label for="showFxPanel">Show Visual Effects</label>
+            <input type="checkbox" id="showFxPanel">
+        </div>
+        <div id="fxControls" class="settings-sub-panel">
+            <div class="checkbox-group">
+                <label for="fxChromatic">Chromatic Aberration</label>
+                <input type="checkbox" id="fxChromatic">
+            </div>
+            <div class="checkbox-group">
+                <label for="fxScanlines">Scanline Overlay</label>
+                <input type="checkbox" id="fxScanlines">
+            </div>
+            <div class="checkbox-group">
+                <label for="fxGrain">Film Grain</label>
+                <input type="checkbox" id="fxGrain">
+            </div>
+            <div class="checkbox-group">
+                <label for="fxBloom">Bloom / Glow</label>
+                <input type="checkbox" id="fxBloom">
+            </div>
+        </div>
+
+        <div class="input-group">
+            <label>Animation Curve</label>
+            <select id="curveSelector">
+                <option value="linear">Linear (Constant)</option>
+                <option value="easeIn">Ease In (Accel)</option>
+                <option value="easeOut">Ease Out (Decel)</option>
+                <option value="easeInOut">Ease In-Out (Smooth)</option>
+            </select>
+        </div>
+
+        <div class="checkbox-group">
+            <label for="enableBlurCheck">Enable Text Blur</label>
+            <input type="checkbox" id="enableBlurCheck" checked>
+        </div>
+
+        <!-- START SETTINGS -->
+        <div class="checkbox-group">
+            <label for="startBlackCheck">Start from Black</label>
+            <input type="checkbox" id="startBlackCheck">
+        </div>
+        <div id="startSettings" class="settings-sub-panel">
+            <div class="input-group">
+                <label>Start Delay (sec): <span id="startDelayVal">0</span></label>
+                <input type="range" id="startDelaySlider" min="0" max="10" value="0" step="0.5">
+            </div>
+            <div class="input-group">
+                <label>Fade In Duration (sec): <span id="fadeVal">2</span></label>
+                <input type="range" id="fadeDurationSlider" min="0.5" max="5" value="2" step="0.5">
+            </div>
+            <div class="input-group">
+                <label>Post-Fade Delay (sec): <span id="postFadeDelayVal">0</span></label>
+                <input type="range" id="postFadeDelaySlider" min="0" max="10" value="0" step="0.5">
+            </div>
+        </div>
+
+        <!-- END SETTINGS -->
+        <div class="checkbox-group">
+            <label for="hideVizCheck">Hide Visuals on Stop</label>
+            <input type="checkbox" id="hideVizCheck">
+        </div>
+        <div class="checkbox-group">
+            <label for="autoBlackoutCheck">Auto Fade to Black</label>
+            <input type="checkbox" id="autoBlackoutCheck">
+        </div>
+        <div id="endSettings" class="settings-sub-panel">
+            <div class="input-group">
+                <label>Blackout Delay (sec): <span id="delayVal">2</span></label>
+                <input type="range" id="blackoutDelaySlider" min="0" max="10" value="2" step="0.5">
+            </div>
+            <div class="input-group">
+                <label>Fade Out Duration (sec): <span id="endFadeVal">2</span></label>
+                <input type="range" id="endFadeDurationSlider" min="0.5" max="5" value="2" step="0.5">
+            </div>
+        </div>
+
+        <div class="input-group">
+            <label>Start / Target Year</label>
+            <div style="display:flex; gap:5px;">
+                <input type="number" id="startYear" value="2024">
+                <input type="number" id="targetYear" value="2055">
+            </div>
+        </div>
+        <div class="input-group">
+            <label>Speed (ms)</label>
+            <input type="range" id="speedRange" min="10" max="400" value="80">
+        </div>
+        
+        <!-- Rumble Controls -->
+        <div class="input-group">
+            <label>Rumble Style</label>
+            <select id="rumbleType">
+                <option value="deep">Deep (Default)</option>
+                <option value="engine">Engine (Space)</option>
+                <option value="wavy">Wavy (Warp Core)</option>
+                <option value="drone">Drone (Sci-Fi)</option>
+                <option value="static">Static (Digital)</option>
+            </select>
+        </div>
+        <div class="input-group">
+            <label>Rumble Hz</label>
+            <input type="range" id="filterSlider" min="50" max="800" value="200">
+        </div>
+        <div class="input-group">
+            <label>Master Volume</label>
+            <input type="range" id="masterVolumeSlider" min="0" max="100" value="80">
+        </div>
+        
+        <div class="btn-group">
+            <button id="btn-start">GO</button>
+            <button id="btn-stop">STOP</button>
+        </div>
+        <div class="btn-group">
+            <button id="btn-reset">RESET</button>
+        </div>
+        <div class="btn-group" style="margin-top: 8px;">
+            <button id="btn-fullscreen">FULL SCREEN</button>
+        </div>
+
+        <div class="btn-group" style="margin-top: 15px; border-top: 1px solid #444; padding-top:10px;">
+            <button id="btn-edit">EDIT LAYOUT</button>
+        </div>
+        
+        <div id="mapping-controls">
+            <div class="input-group">
+                <label>Global Scale: <span id="scaleVal">1.0</span></label>
+                <input type="range" id="scaleSlider" min="0.1" max="3.0" value="1.0" step="0.1">
+            </div>
+            <button id="btn-reset-layout" style="background: #444; color: #fff;">Reset Position</button>
+            <p style="font-size:10px; color:#666; margin-top:5px; text-align:center;">
+                Drag content to move.<br>Green lines = Snapped to center.
+            </p>
+        </div>
+        
+        <div class="btn-group" style="margin-top: 15px; border-top: 1px solid #444; padding-top:10px;">
+            <button id="btn-export">EXPORT CONFIG</button>
+            <button id="btn-import-trigger">IMPORT CONFIG</button>
+            <input type="file" id="file-import" style="display:none" accept=".json">
+        </div>
+
+        <p class="hint">[SPACE] Start/Stop | [H] Hide UI | [R] Reset</p>
+    </div>
+
+    <!-- MAIN DISPLAY -->
+    <div id="stage-display">
+        
+        <div id="movable-stage">
+            <div id="viz-container">
+                <!-- Rings -->
+                <div id="viz-rings" class="viz-element">
+                    <div class="ring-box" id="rings-container">
+                        <div class="ring ring-outer" id="ring-outer"></div>
+                        <div class="ring ring-inner" id="ring-inner"></div>
+                    </div>
+                </div>
+                <!-- Clock -->
+                <div id="viz-clock" class="viz-element">
+                    <div id="clock-gradient-overlay"></div>
+                    <div id="clock-viz-inner">
+                        <div class="clock-center-cap"></div>
+                        <div class="clock-hand" id="clock-hand"></div>
+                    </div>
+                </div>
+                <!-- Sun -->
+                <div id="viz-sun" class="viz-element">
+                    <div id="vignette"></div>
+                    <div id="sky-glow"></div>
+                    <div id="sun-orbit-container">
+                        <div id="sun-orb"></div>
+                    </div>
+                </div>
+            </div>
+            <h1 id="year-text">2024</h1>
+        </div>
+        
+    </div>
+
+    <div id="messageBox"></div>
+
+    <script>
+        const elements = {
+            stage: document.getElementById('stage-display'),
+            movableStage: document.getElementById('movable-stage'),
+            display: document.getElementById('year-text'),
+            controls: document.getElementById('controls'),
+            msgBox: document.getElementById('messageBox'),
+            themeSel: document.getElementById('themeSelector'),
+            curveSel: document.getElementById('curveSelector'),
+            enableBlurCheck: document.getElementById('enableBlurCheck'),
+            hideVizCheck: document.getElementById('hideVizCheck'),
+            startBlackCheck: document.getElementById('startBlackCheck'),
+            autoBlackoutCheck: document.getElementById('autoBlackoutCheck'),
+            showFxPanel: document.getElementById('showFxPanel'),
+            fxChromatic: document.getElementById('fxChromatic'),
+            fxScanlines: document.getElementById('fxScanlines'),
+            fxGrain: document.getElementById('fxGrain'),
+            fxBloom: document.getElementById('fxBloom'),
+            clockTicksCheck: document.getElementById('clockTicksCheck'),
+            
+            // Panels
+            startSettings: document.getElementById('startSettings'),
+            endSettings: document.getElementById('endSettings'),
+            ringControls: document.getElementById('ringControls'),
+            sunControls: document.getElementById('sunControls'),
+            clockControls: document.getElementById('clockControls'),
+            fxControls: document.getElementById('fxControls'),
+            
+            // Theme Specific
+            ringOffsetSlider: document.getElementById('ringOffsetSlider'),
+            themeColorPicker: document.getElementById('themeColorPicker'),
+            clockColorPicker: document.getElementById('clockColorPicker'),
+            sunSpeedSlider: document.getElementById('sunSpeedSlider'),
+            nightSpeedSlider: document.getElementById('nightSpeedSlider'),
+            
+            sunSpeedVal: document.getElementById('sunSpeedVal'),
+            nightSpeedVal: document.getElementById('nightSpeedVal'),
+            
+            // General Sliders
+            startDelaySlider: document.getElementById('startDelaySlider'),
+            postFadeDelaySlider: document.getElementById('postFadeDelaySlider'),
+            blackoutDelaySlider: document.getElementById('blackoutDelaySlider'),
+            fadeDurationSlider: document.getElementById('fadeDurationSlider'),
+            endFadeDurationSlider: document.getElementById('endFadeDurationSlider'),
+            scaleSlider: document.getElementById('scaleSlider'),
+            // Val Displays
+            startDelayVal: document.getElementById('startDelayVal'),
+            postFadeDelayVal: document.getElementById('postFadeDelayVal'),
+            delayVal: document.getElementById('delayVal'),
+            fadeVal: document.getElementById('fadeVal'),
+            endFadeVal: document.getElementById('endFadeVal'),
+            scaleVal: document.getElementById('scaleVal'),
+            // Buttons
+            startBtn: document.getElementById('btn-start'),
+            stopBtn: document.getElementById('btn-stop'),
+            resetBtn: document.getElementById('btn-reset'),
+            fullscreenBtn: document.getElementById('btn-fullscreen'),
+            editBtn: document.getElementById('btn-edit'),
+            resetLayoutBtn: document.getElementById('btn-reset-layout'),
+            btnExport: document.getElementById('btn-export'),
+            btnImportTrigger: document.getElementById('btn-import-trigger'),
+            fileImport: document.getElementById('file-import'),
+            // Inputs
+            startIn: document.getElementById('startYear'),
+            targetIn: document.getElementById('targetYear'),
+            speedIn: document.getElementById('speedRange'),
+            filterIn: document.getElementById('filterSlider'),
+            rumbleType: document.getElementById('rumbleType'),
+            masterVolumeSlider: document.getElementById('masterVolumeSlider'),
+            // Visual Elements
+            snapX: document.getElementById('snap-x'),
+            snapY: document.getElementById('snap-y'),
+            ringsBox: document.getElementById('rings-container'),
+            ringOuter: document.getElementById('ring-outer'),
+            ringInner: document.getElementById('ring-inner'),
+            clockHand: document.getElementById('clock-hand'),
+            sunOrbit: document.getElementById('sun-orbit-container'),
+            scanlinesOverlay: document.getElementById('fx-scanlines'),
+            grainOverlay: document.getElementById('fx-grain')
+        };
+
+        const themes = {
+            cyan: { color: '#00f3ff', rgb: '0, 243, 255', viz: 'viz-rings' },
+            red: { color: '#ff3366', rgb: '255, 51, 102', viz: 'viz-rings' },
+            green: { color: '#00ff41', rgb: '0, 255, 65', viz: 'viz-rings' },
+            clock: { color: '#d4af37', rgb: '212, 175, 55', viz: 'viz-clock' },
+            sun: { color: '#ffffff', rgb: '255, 255, 255', viz: 'viz-sun' }
+        };
+
+        let state = {
+            year: 2024,
+            startYear: 2024,
+            target: 2055,
+            running: false,
+            timeoutId: null,
+            blackoutTimeoutId: null,
+            startDelayTimeoutId: null,
+            postFadeTimeoutId: null,
+            audioInit: false,
+            gain: null,
+            filter: null,
+            noise: null,
+            tremolo: null,
+            dist: null,
+            crusher: null,
+            amOsc: null,
+            masterVol: null,
+            fmOsc: null,
+            fatOsc: null,
+            autoFilter: null,
+            bitCrusher: null,
+            currentRumbleType: 'deep',
+            isEditing: false,
+            dragStart: { x: 0, y: 0 },
+            currentPos: { x: 0, y: 0 },
+            scale: 1.0,
+            // Physics Animation State
+            lastFrameTime: 0,
+            animRotation: 0,
+            sunRotation: -90, 
+            currentSpeedFactor: 0 
+        };
+
+        // UI Helper Definitions
+        function toggleSubPanels() {
+            if (elements.startBlackCheck.checked) elements.startSettings.classList.add('visible'); else elements.startSettings.classList.remove('visible');
+            if (elements.autoBlackoutCheck.checked) elements.endSettings.classList.add('visible'); else elements.endSettings.classList.remove('visible');
+            if (elements.showFxPanel.checked) elements.fxControls.classList.add('visible'); else elements.fxControls.classList.remove('visible');
+        }
+
+        function updateFadeDuration() {
+            const dur = elements.fadeDurationSlider.value;
+            elements.stage.style.transition = `opacity ${dur}s ease-in-out`;
+            elements.fadeVal.textContent = dur;
+        }
+
+        // --- EXPORT / IMPORT ---
+        function exportConfig() {
+            const config = {
+                theme: elements.themeSel.value,
+                curve: elements.curveSel.value,
+                enableBlur: elements.enableBlurCheck.checked,
+                hideViz: elements.hideVizCheck.checked,
+                startBlack: elements.startBlackCheck.checked,
+                autoBlackout: elements.autoBlackoutCheck.checked,
+                startDelay: elements.startDelaySlider.value,
+                postFadeDelay: elements.postFadeDelaySlider.value,
+                fadeDuration: elements.fadeDurationSlider.value,
+                blackoutDelay: elements.blackoutDelaySlider.value,
+                endFadeDuration: elements.endFadeDurationSlider.value,
+                startYear: elements.startIn.value,
+                targetYear: elements.targetIn.value,
+                speed: elements.speedIn.value,
+                rumbleHz: elements.filterIn.value,
+                rumbleType: elements.rumbleType.value,
+                masterVolume: elements.masterVolumeSlider.value,
+                // Theme Specifics
+                ringOffset: elements.ringOffsetSlider.value,
+                sunSpeed: elements.sunSpeedSlider.value,
+                nightSpeed: elements.nightSpeedSlider.value,
+                themeColor: elements.themeColorPicker.value,
+                clockColor: elements.clockColorPicker.value,
+                clockTicks: elements.clockTicksCheck.checked,
+                // FX
+                fxChromatic: elements.fxChromatic.checked,
+                fxScanlines: elements.fxScanlines.checked,
+                fxGrain: elements.fxGrain.checked,
+                fxBloom: elements.fxBloom.checked,
+                // Layout
+                layoutScale: elements.scaleSlider.value,
+                layoutX: state.currentPos.x,
+                layoutY: state.currentPos.y
+            };
+            
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(config));
+            const downloadAnchorNode = document.createElement('a');
+            downloadAnchorNode.setAttribute("href", dataStr);
+            downloadAnchorNode.setAttribute("download", "time_jump_config.json");
+            document.body.appendChild(downloadAnchorNode);
+            downloadAnchorNode.click();
+            downloadAnchorNode.remove();
+        }
+
+        function importConfig(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const config = JSON.parse(e.target.result);
+                    
+                    elements.themeSel.value = config.theme || 'cyan';
+                    elements.curveSel.value = config.curve || 'linear';
+                    elements.enableBlurCheck.checked = config.enableBlur ?? true;
+                    elements.hideVizCheck.checked = config.hideViz ?? false;
+                    elements.startBlackCheck.checked = config.startBlack ?? false;
+                    elements.autoBlackoutCheck.checked = config.autoBlackout ?? false;
+                    
+                    elements.startDelaySlider.value = config.startDelay || 0;
+                    elements.postFadeDelaySlider.value = config.postFadeDelay || 0;
+                    elements.fadeDurationSlider.value = config.fadeDuration || 2;
+                    elements.blackoutDelaySlider.value = config.blackoutDelay || 2;
+                    elements.endFadeDurationSlider.value = config.endFadeDuration || 2;
+                    
+                    elements.startIn.value = config.startYear || 2024;
+                    elements.targetIn.value = config.targetYear || 2055;
+                    elements.speedIn.value = config.speed || 80;
+                    elements.filterIn.value = config.rumbleHz || 200;
+                    elements.rumbleType.value = config.rumbleType || 'deep';
+                    elements.masterVolumeSlider.value = config.masterVolume || 80;
+                    
+                    elements.ringOffsetSlider.value = config.ringOffset || 100;
+                    elements.sunSpeedSlider.value = config.sunSpeed || 1.0;
+                    elements.nightSpeedSlider.value = config.nightSpeed || 1.0;
+                    elements.themeColorPicker.value = config.themeColor || '#00f3ff';
+                    elements.clockColorPicker.value = config.clockColor || '#d4af37';
+                    elements.clockTicksCheck.checked = config.clockTicks ?? false;
+                    
+                    elements.fxChromatic.checked = config.fxChromatic ?? false;
+                    elements.fxScanlines.checked = config.fxScanlines ?? false;
+                    elements.fxGrain.checked = config.fxGrain ?? false;
+                    elements.fxBloom.checked = config.fxBloom ?? false;
+                    
+                    elements.scaleSlider.value = config.layoutScale || 1.0;
+                    state.currentPos.x = config.layoutX || 0;
+                    state.currentPos.y = config.layoutY || 0;
+                    state.scale = parseFloat(config.layoutScale) || 1.0;
+
+                    // Apply everything
+                    updateColorFromPicker(elements.themeColorPicker.value);
+                    updateClockColor(elements.clockColorPicker.value);
+                    updateClockTicks();
+                    applyTheme(elements.themeSel.value);
+                    updateFadeDuration();
+                    toggleSubPanels();
+                    updateTransform();
+                    updateRingOffset();
+                    updateFx();
+                    
+                    // Update texts
+                    elements.startDelayVal.textContent = elements.startDelaySlider.value;
+                    elements.postFadeDelayVal.textContent = elements.postFadeDelaySlider.value;
+                    elements.fadeVal.textContent = elements.fadeDurationSlider.value;
+                    elements.delayVal.textContent = elements.blackoutDelaySlider.value;
+                    elements.endFadeVal.textContent = elements.endFadeDurationSlider.value;
+                    elements.sunSpeedVal.textContent = elements.sunSpeedSlider.value;
+                    elements.nightSpeedVal.textContent = elements.nightSpeedSlider.value;
+                    elements.scaleVal.textContent = elements.scaleSlider.value;
+                    
+                    if (elements.startBlackCheck.checked) {
+                        elements.stage.classList.add('stage-blackout');
+                    } else {
+                        elements.stage.classList.remove('stage-blackout');
+                    }
+
+                    showMessage("Configuration Loaded");
+                    
+                } catch (err) {
+                    console.error(err);
+                    showMessage("Error loading config");
+                }
+            };
+            reader.readAsText(file);
+            event.target.value = '';
+        }
+
+        // --- THEME LOGIC ---
+        function applyTheme(themeName) {
+            const t = themes[themeName];
+            
+            if (themeName !== 'clock') {
+                elements.themeColorPicker.value = t.color; 
+                updateColorFromPicker(t.color);
+            }
+
+            document.body.className = `theme-${themeName}`;
+            if (state.isEditing) document.body.classList.add('edit-mode-active');
+            if (elements.controls.style.display === 'none') document.body.classList.add('projection-mode');
+            
+            // Re-apply FX classes
+            updateFx();
+
+            document.querySelectorAll('.viz-element').forEach(el => el.style.display = 'none');
+            document.getElementById(t.viz).style.display = 'block';
+
+            elements.ringControls.style.display = 'none';
+            elements.sunControls.style.display = 'none';
+            elements.clockControls.style.display = 'none';
+
+            if (themeName === 'sun') {
+                elements.display.style.top = '50%'; 
+                elements.display.style.textShadow = '0 0 20px black';
+                elements.sunControls.style.display = 'block';
+            } else if (themeName === 'clock') {
+                elements.display.style.top = '75%'; 
+                elements.display.style.textShadow = '0 0 30px rgba(0,0,0,0.8)'; 
+                elements.clockControls.style.display = 'block';
+            } else {
+                elements.display.style.top = '50%';
+                updateColorFromPicker(elements.themeColorPicker.value);
+                elements.display.style.textShadow = `0 0 30px rgba(${t.rgb}, 0.6)`;
+                elements.ringControls.style.display = 'block';
+                updateRingOffset();
+            }
+            showMessage(`Theme: ${themeName.toUpperCase()}`);
+            updateStaticVisuals();
+        }
+
+        function updateColorFromPicker(hex) {
+            const root = document.documentElement;
+            root.style.setProperty('--primary-color', hex);
+            const r = parseInt(hex.substr(1,2), 16);
+            const g = parseInt(hex.substr(3,2), 16);
+            const b = parseInt(hex.substr(5,2), 16);
+            root.style.setProperty('--primary-color-rgb', `${r}, ${g}, ${b}`);
+            elements.startBtn.style.background = hex;
+        }
+        
+        function updateClockColor(hex) {
+            if (elements.themeSel.value === 'clock') {
+                updateColorFromPicker(hex);
+            }
+        }
+        
+        function updateClockTicks() {
+            const markers = document.querySelectorAll('.clock-face-marker');
+            markers.forEach(m => {
+                m.style.display = elements.clockTicksCheck.checked ? 'block' : 'none';
+            });
+        }
+
+        function updateRingOffset() {
+            const val = elements.ringOffsetSlider.value;
+            elements.ringsBox.style.transform = `translate(-50%, -50%) translateY(${val}px)`;
+        }
+        
+        function updateFx() {
+            if (elements.fxChromatic.checked) document.body.classList.add('fx-chromatic');
+            else document.body.classList.remove('fx-chromatic');
+            
+            if (elements.fxScanlines.checked) elements.scanlinesOverlay.classList.add('active');
+            else elements.scanlinesOverlay.classList.remove('active');
+            
+            if (elements.fxGrain.checked) elements.grainOverlay.classList.add('active');
+            else elements.grainOverlay.classList.remove('active');
+            
+            if (elements.fxBloom.checked) document.body.classList.add('fx-bloom');
+            else document.body.classList.remove('fx-bloom');
+        }
+
+        function updateStaticVisuals() {
+            elements.display.innerText = state.year;
+            if (!state.running && elements.themeSel.value === 'clock') {
+                const rotation = (state.year % 12) * 30;
+                elements.clockHand.style.transform = `translate(-50%, -100%) rotate(${rotation}deg)`;
+            }
+        }
+
+        function initAudio() {
+            if (state.audioInit && state.currentRumbleType === elements.rumbleType.value) return;
+            
+            if (state.gain) {
+                state.gain.disconnect();
+                state.filter.disconnect();
+                if (state.noise) { state.noise.stop(); state.noise.dispose(); }
+                if (state.tremolo) { state.tremolo.stop(); state.tremolo.dispose(); }
+                if (state.crusher) { state.crusher.dispose(); }
+                if (state.dist) { state.dist.dispose(); }
+                if (state.amOsc) { state.amOsc.stop(); state.amOsc.dispose(); }
+                if (state.fmOsc) { state.fmOsc.stop(); state.fmOsc.dispose(); }
+                if (state.fatOsc) { state.fatOsc.stop(); state.fatOsc.dispose(); }
+                if (state.autoFilter) { state.autoFilter.dispose(); }
+                if (state.bitCrusher) { state.bitCrusher.dispose(); }
+                if (state.masterVol) { state.masterVol.dispose(); }
+            }
+
+            Tone.context.resume();
+            
+            state.masterVol = new Tone.Volume(0).toDestination();
+            state.gain = new Tone.Gain(0).connect(state.masterVol);
+            const startFreq = parseFloat(elements.filterIn.value);
+            state.filter = new Tone.Filter(startFreq, "lowpass").connect(state.gain);
+            
+            state.currentRumbleType = elements.rumbleType.value;
+            
+            if (state.currentRumbleType === 'engine') {
+                state.fmOsc = new Tone.FMOscillator({
+                    frequency: 50, type: "sawtooth", modulationType: "square", harmonicity: 0.5, modulationIndex: 15
+                }).connect(state.filter);
+                state.fmOsc.start();
+            } else if (state.currentRumbleType === 'wavy') {
+                state.amOsc = new Tone.AMOscillator(60, "sine", "sine").connect(state.filter);
+                state.dist = new Tone.Chebyshev(5).connect(state.filter);
+                state.amOsc.connect(state.dist);
+                state.amOsc.frequency.value = 60;
+                state.amOsc.harmonicity.value = 0.2; 
+                state.amOsc.modulationType = "sine";
+                state.amOsc.start();
+            } else if (state.currentRumbleType === 'drone') {
+                state.fatOsc = new Tone.FatOscillator(50, "sawtooth", 20).connect(state.filter);
+                state.fatOsc.start();
+            } else if (state.currentRumbleType === 'static') {
+                state.noise = new Tone.Noise("white");
+                state.autoFilter = new Tone.AutoFilter(0.5, 200, 4).connect(state.filter).start();
+                state.bitCrusher = new Tone.BitCrusher(4).connect(state.autoFilter);
+                state.noise.connect(state.bitCrusher);
+                state.noise.start();
+            } else {
+                state.noise = new Tone.Noise("brown").connect(state.filter);
+                state.noise.start();
+            }
+            
+            updateMasterVolume();
+            state.audioInit = true;
+        }
+        
+        function updateMasterVolume() {
+            if (!state.masterVol) return;
+            const val = parseFloat(elements.masterVolumeSlider.value);
+            let db;
+            if (val === 0) db = -Infinity;
+            else db = 20 * Math.log10(val / 100);
+            state.masterVol.volume.rampTo(db, 0.1);
+        }
+
+        function playAudio() {
+            initAudio(); 
+            state.gain.gain.rampTo(0.8, 2);
+        }
+
+        function startJump() {
+            if (state.running) return;
+            const delay = parseFloat(elements.startDelaySlider.value) * 1000;
+            if (delay > 0) {
+                state.startDelayTimeoutId = setTimeout(executeStartSequence, delay);
+            } else {
+                executeStartSequence();
+            }
+        }
+        
+        function executeStartSequence() {
+            state.running = true;
+            state.startYear = parseInt(elements.startIn.value);
+            state.year = state.startYear; 
+            state.target = parseInt(elements.targetIn.value);
+            
+            if (state.year === state.target) return stopJump();
+
+            cancelBlackout();
+            
+            let fadeWaitTime = 0;
+            if (elements.stage.classList.contains('stage-blackout')) {
+                elements.stage.classList.remove('stage-blackout');
+                const fadeDuration = parseFloat(elements.fadeDurationSlider.value) * 1000;
+                fadeWaitTime = fadeDuration;
+            }
+
+            const postFadeDelay = parseFloat(elements.postFadeDelaySlider.value) * 1000;
+            const totalWait = fadeWaitTime + postFadeDelay;
+
+            if (totalWait > 0) {
+                state.postFadeTimeoutId = setTimeout(beginAnimation, totalWait);
+            } else {
+                beginAnimation();
+            }
+        }
+
+        function beginAnimation() {
+            if (!state.running) return;
+
+            playAudio();
+            
+            elements.display.style.filter = '';
+            if (elements.enableBlurCheck.checked) elements.display.classList.add('warp-effect');
+            
+            elements.ringsBox.classList.remove('fade-out');
+            elements.clockHand.classList.remove('fade-out');
+            elements.sunOrbit.classList.remove('fade-out');
+
+            state.currentSpeedFactor = 0; 
+            loop(); 
+            requestAnimationFrame(renderLoop); 
+        }
+
+        function loop() {
+            if (!state.running) return;
+
+            if (state.year < state.target) state.year++;
+            else if (state.year > state.target) state.year--;
+            else {
+                stopJump();
+                return;
+            }
+            updateStaticVisuals();
+
+            const baseSpeed = parseInt(elements.speedIn.value);
+            const totalRange = Math.abs(state.target - state.startYear);
+            const currentDist = Math.abs(state.year - state.startYear);
+            const progress = totalRange === 0 ? 1 : currentDist / totalRange;
+
+            let delay = baseSpeed;
+            const curve = elements.curveSel.value;
+            const multiplier = 3;
+
+            if (curve === 'easeIn') {
+                delay = baseSpeed + (baseSpeed * multiplier * (1 - progress));
+                state.currentSpeedFactor = progress; 
+            } else if (curve === 'easeOut') {
+                delay = baseSpeed + (baseSpeed * multiplier * progress);
+                state.currentSpeedFactor = 1 - progress; 
+            } else if (curve === 'easeInOut') {
+                const distFromMiddle = Math.abs(0.5 - progress) * 2; 
+                delay = baseSpeed + (baseSpeed * multiplier * distFromMiddle);
+                state.currentSpeedFactor = 1 - distFromMiddle; 
+            } else {
+                state.currentSpeedFactor = 1; 
+            }
+            
+            if (curve === 'easeIn') delay = baseSpeed + (baseSpeed * 3 * (1 - progress));
+            else if (curve === 'easeOut') delay = baseSpeed + (baseSpeed * 3 * progress);
+            else if (curve === 'easeInOut') {
+                const distFromMiddle = Math.abs(0.5 - progress) * 2;
+                delay = baseSpeed + (baseSpeed * 3 * distFromMiddle);
+            }
+
+            state.timeoutId = setTimeout(loop, delay);
+        }
+
+        function renderLoop(timestamp) {
+            if (!state.running && state.currentSpeedFactor <= 0.01) return; 
+
+            if (!state.lastFrameTime) state.lastFrameTime = timestamp;
+            const delta = (timestamp - state.lastFrameTime) / 1000; 
+            state.lastFrameTime = timestamp;
+
+            const baseRotationSpeed = 360; 
+            let speed = baseRotationSpeed * state.currentSpeedFactor;
+            
+            if (!state.running && state.currentSpeedFactor > 0) {
+                state.currentSpeedFactor *= 0.95; 
+                speed = baseRotationSpeed * state.currentSpeedFactor;
+            }
+
+            state.animRotation += speed * delta;
+
+            const theme = elements.themeSel.value;
+            
+            if (theme === 'clock') {
+                elements.clockHand.style.transform = `translate(-50%, -100%) rotate(${state.animRotation}deg)`;
+            } else if (theme === 'sun') {
+                const baseMult = parseFloat(elements.sunSpeedSlider.value);
+                const nightMult = parseFloat(elements.nightSpeedSlider.value);
+                
+                let sunStep = speed * delta * 0.2 * baseMult;
+                
+                let checkAngle = state.sunRotation % 360;
+                if (checkAngle < 0) checkAngle += 360;
+                
+                if (checkAngle > 90 && checkAngle < 270) {
+                    sunStep *= nightMult; 
+                }
+                
+                state.sunRotation += sunStep;
+                elements.sunOrbit.style.transform = `rotate(${state.sunRotation}deg)`;
+                
+            } else {
+                const offset = elements.ringOffsetSlider.value;
+                elements.ringsBox.style.transform = `translate(-50%, -50%) translateY(${offset}px)`; 
+                elements.ringOuter.style.transform = `rotateX(80deg) rotateZ(${state.animRotation}deg)`;
+                elements.ringInner.style.transform = `rotateX(70deg) rotateZ(${state.animRotation * -1.5}deg)`;
+            }
+
+            requestAnimationFrame(renderLoop);
+        }
+
+        function stopJump() {
+            if (!state.running) return;
+            state.running = false;
+            clearTimeout(state.timeoutId);
+
+            if (state.gain) state.gain.gain.rampTo(0, 1.5);
+
+            if (elements.hideVizCheck.checked) {
+                applyHideViz();
+            }
+
+            let remainingTicks = 6;
+            let tickDelay = parseInt(elements.speedIn.value);
+            
+            elements.display.style.transition = 'transform 0.2s'; 
+
+            function brakeLoop() {
+                if (remainingTicks <= 0) {
+                    elements.display.style.transition = '';
+                    finalizeStop();
+                    return;
+                }
+                
+                if (elements.enableBlurCheck.checked) {
+                    const blurAmount = (remainingTicks / 6) * 2;
+                    elements.display.style.filter = `blur(${blurAmount}px)`;
+                }
+
+                if (state.year !== state.target) {
+                     if (state.year < state.target) state.year++;
+                     else state.year--;
+                }
+                updateStaticVisuals();
+
+                remainingTicks--;
+                tickDelay *= 1.4;
+                setTimeout(brakeLoop, tickDelay);
+            }
+            brakeLoop();
+        }
+        
+        function applyHideViz() {
+            const theme = elements.themeSel.value;
+            if (theme === 'clock') {
+                elements.clockHand.classList.add('fade-out');
+            } else if (theme === 'sun') {
+                elements.sunOrbit.classList.add('fade-out');
+            } else {
+                elements.ringsBox.classList.add('fade-out');
+            }
+        }
+
+        function finalizeStop() {
+            elements.display.classList.remove('warp-effect');
+            elements.display.style.filter = '';
+            
+            if (!elements.hideVizCheck.checked) {
+                elements.clockHand.classList.remove('fade-out');
+                elements.sunOrbit.classList.remove('fade-out');
+                elements.ringsBox.classList.remove('fade-out');
+            }
+            
+            updateStaticVisuals();
+            
+            if (elements.autoBlackoutCheck.checked) {
+                scheduleBlackout();
+            }
+        }
+        
+        function updateFadeDuration() {
+            const dur = elements.fadeDurationSlider.value;
+            elements.stage.style.transition = `opacity ${dur}s ease-in-out`;
+            elements.fadeVal.textContent = dur;
+        }
+
+        function scheduleBlackout() {
+            const delay = parseFloat(elements.blackoutDelaySlider.value) * 1000;
+            const duration = parseFloat(elements.endFadeDurationSlider.value);
+            
+            state.blackoutTimeoutId = setTimeout(() => {
+                elements.stage.style.transition = `opacity ${duration}s ease-in-out`;
+                elements.stage.classList.add('stage-blackout');
+            }, delay);
+        }
+        
+        function cancelBlackout() {
+            if (state.blackoutTimeoutId) clearTimeout(state.blackoutTimeoutId);
+            if (state.startDelayTimeoutId) clearTimeout(state.startDelayTimeoutId);
+            if (state.postFadeTimeoutId) clearTimeout(state.postFadeTimeoutId);
+        }
+
+        function resetJump() {
+            if(state.running) {
+                state.running = false;
+                clearTimeout(state.timeoutId);
+                finalizeStop();
+                if(state.gain) state.gain.gain.rampTo(0, 0.1);
+            }
+            cancelBlackout();
+            
+            elements.stage.style.transition = 'none'; 
+            if (elements.startBlackCheck.checked) {
+                elements.stage.classList.add('stage-blackout');
+            } else {
+                elements.stage.classList.remove('stage-blackout');
+            }
+            void elements.stage.offsetWidth;
+            updateFadeDuration();
+
+            state.year = parseInt(elements.startIn.value);
+            state.animRotation = 0; 
+            state.sunRotation = -90;
+            state.currentSpeedFactor = 0;
+            
+            elements.clockHand.style.transform = `translate(-50%, -100%) rotate(0deg)`;
+            elements.sunOrbit.style.transform = `rotate(-90deg)`;
+            elements.ringOuter.style.transform = `rotateX(80deg) rotateZ(0deg)`;
+            
+            elements.clockHand.classList.remove('fade-out');
+            elements.sunOrbit.classList.remove('fade-out');
+            elements.ringsBox.classList.remove('fade-out');
+            elements.display.style.filter = '';
+
+            updateStaticVisuals();
+            showMessage("RESET");
+        }
+
+        function showMessage(msg) {
+            if (document.body.classList.contains('projection-mode')) return;
+            elements.msgBox.innerText = msg;
+            elements.msgBox.style.display = 'block';
+            setTimeout(() => elements.msgBox.style.display = 'none', 2000);
+        }
+
+        function toggleControls() {
+            const isHidden = elements.controls.style.display === 'none';
+            if (isHidden) {
+                elements.controls.style.display = 'block';
+                document.body.classList.remove('projection-mode');
+            } else {
+                elements.controls.style.display = 'none';
+                document.body.classList.add('projection-mode');
+                elements.msgBox.style.display = 'none';
+            }
+        }
+
+        function toggleEditMode() {
+            state.isEditing = !state.isEditing;
+            if (state.isEditing) {
+                document.body.classList.add('edit-mode-active');
+                elements.editBtn.classList.add('active');
+                elements.editBtn.textContent = "DONE EDITING";
+                elements.stage.classList.remove('stage-blackout');
+                elements.ringsBox.classList.remove('fade-out');
+                elements.clockHand.classList.remove('fade-out');
+                elements.sunOrbit.classList.remove('fade-out');
+            } else {
+                document.body.classList.remove('edit-mode-active');
+                elements.editBtn.classList.remove('active');
+                elements.editBtn.textContent = "EDIT LAYOUT";
+                elements.snapX.classList.remove('snap-visible');
+                elements.snapY.classList.remove('snap-visible');
+                if (!state.running) {
+                    if (elements.startBlackCheck.checked) elements.stage.classList.add('stage-blackout');
+                    if (elements.hideVizCheck.checked) applyHideViz();
+                }
+            }
+        }
+
+        function updateTransform() {
+            elements.movableStage.style.transform = `translate(${state.currentPos.x}px, ${state.currentPos.y}px) scale(${state.scale})`;
+        }
+        function resetLayout() {
+            state.currentPos = { x: 0, y: 0 };
+            state.scale = 1.0;
+            elements.scaleSlider.value = 1.0;
+            elements.scaleVal.textContent = "1.0";
+            updateTransform();
+        }
+
+        let isDragging = false;
+        elements.movableStage.addEventListener('mousedown', (e) => {
+            if (!state.isEditing) return;
+            isDragging = true;
+            state.dragStart = { x: e.clientX - state.currentPos.x, y: e.clientY - state.currentPos.y };
+        });
+        window.addEventListener('mousemove', (e) => {
+            if (!isDragging || !state.isEditing) return;
+            e.preventDefault();
+            let newX = e.clientX - state.dragStart.x;
+            let newY = e.clientY - state.dragStart.y;
+            const snapThreshold = 20;
+            if (Math.abs(newX) < snapThreshold) { newX = 0; elements.snapX.classList.add('snap-visible'); } else { elements.snapX.classList.remove('snap-visible'); }
+            if (Math.abs(newY) < snapThreshold) { newY = 0; elements.snapY.classList.add('snap-visible'); } else { elements.snapY.classList.remove('snap-visible'); }
+            state.currentPos = { x: newX, y: newY };
+            updateTransform();
+        });
+        window.addEventListener('mouseup', () => {
+            isDragging = false;
+            if(state.isEditing) { elements.snapX.classList.remove('snap-visible'); elements.snapY.classList.remove('snap-visible'); }
+        });
+        elements.scaleSlider.addEventListener('input', (e) => {
+            state.scale = parseFloat(e.target.value);
+            elements.scaleVal.textContent = state.scale.toFixed(1);
+            updateTransform();
+        });
+
+        window.onload = () => {
+            const clockInner = document.getElementById('clock-viz-inner');
+            const numerals = ['XII', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI'];
+            const radius = 210; 
+            numerals.forEach((num, index) => {
+                const el = document.createElement('div');
+                el.className = 'roman-numeral';
+                el.innerText = num;
+                const angle = (index * 30 - 90) * (Math.PI / 180);
+                const x = Math.cos(angle) * radius;
+                const y = Math.sin(angle) * radius;
+                el.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
+                clockInner.appendChild(el);
+            });
+            
+            const tickRadius = 230;
+            for(let i=0; i<60; i++) {
+                if (i%5 !== 0) {
+                    const tick = document.createElement('div');
+                    tick.className = 'clock-face-marker';
+                    const angle = (i * 6 - 90) * (Math.PI / 180);
+                    const x = Math.cos(angle) * tickRadius;
+                    const y = Math.sin(angle) * tickRadius;
+                    tick.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px)) rotate(${i * 6}deg)`;
+                    clockInner.appendChild(tick);
+                }
+            }
+
+            applyTheme('cyan');
+            updateFadeDuration();
+            toggleSubPanels();
+            if (elements.startBlackCheck.checked) elements.stage.classList.add('stage-blackout');
+        };
+
+        elements.startBlackCheck.addEventListener('change', () => { toggleSubPanels(); if (!state.running) { elements.stage.style.transition = 'none'; if (elements.startBlackCheck.checked) elements.stage.classList.add('stage-blackout'); else elements.stage.classList.remove('stage-blackout'); void elements.stage.offsetWidth; updateFadeDuration(); } });
+        elements.autoBlackoutCheck.addEventListener('change', toggleSubPanels);
+        elements.showFxPanel.addEventListener('change', toggleSubPanels);
+        elements.hideVizCheck.addEventListener('change', () => { if (!state.running) { if (elements.hideVizCheck.checked) applyHideViz(); else { elements.clockHand.classList.remove('fade-out'); elements.sunOrbit.classList.remove('fade-out'); elements.ringsBox.classList.remove('fade-out'); } } });
+
+        elements.themeColorPicker.addEventListener('input', (e) => updateColorFromPicker(e.target.value));
+        elements.ringOffsetSlider.addEventListener('input', updateRingOffset);
+        elements.sunSpeedSlider.addEventListener('input', (e) => elements.sunSpeedVal.textContent = e.target.value);
+        elements.nightSpeedSlider.addEventListener('input', (e) => elements.nightSpeedVal.textContent = e.target.value);
+        elements.clockColorPicker.addEventListener('input', (e) => updateClockColor(e.target.value));
+        elements.clockTicksCheck.addEventListener('change', updateClockTicks);
+        
+        elements.fxChromatic.addEventListener('change', updateFx);
+        elements.fxScanlines.addEventListener('change', updateFx);
+        elements.fxGrain.addEventListener('change', updateFx);
+        elements.fxBloom.addEventListener('change', updateFx);
+        elements.masterVolumeSlider.addEventListener('input', updateMasterVolume);
+
+        elements.themeSel.addEventListener('change', (e) => applyTheme(e.target.value));
+        elements.startBtn.onclick = startJump;
+        elements.stopBtn.onclick = stopJump;
+        elements.resetBtn.onclick = resetJump;
+        elements.fullscreenBtn.addEventListener('click', () => { if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(console.log); else document.exitFullscreen(); });
+        elements.editBtn.addEventListener('click', toggleEditMode);
+        elements.resetLayoutBtn.addEventListener('click', resetLayout);
+        elements.btnExport.addEventListener('click', exportConfig);
+        elements.btnImportTrigger.addEventListener('click', () => elements.fileImport.click());
+        elements.fileImport.addEventListener('change', importConfig);
+        
+        elements.startDelaySlider.addEventListener('input', (e) => elements.startDelayVal.textContent = e.target.value);
+        elements.postFadeDelaySlider.addEventListener('input', (e) => elements.postFadeDelayVal.textContent = e.target.value);
+        elements.blackoutDelaySlider.addEventListener('input', (e) => elements.delayVal.textContent = e.target.value);
+        elements.fadeDurationSlider.addEventListener('input', (e) => { elements.fadeVal.textContent = e.target.value; updateFadeDuration(); });
+        elements.endFadeDurationSlider.addEventListener('input', (e) => { elements.endFadeVal.textContent = e.target.value; });
+        elements.filterIn.addEventListener('input', (e) => { if(state.filter) state.filter.frequency.rampTo(parseFloat(e.target.value), 0.1); });
+        elements.speedIn.addEventListener('input', () => {});
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key.toLowerCase() === 'h') toggleControls();
+            if (e.code === 'Space') { e.preventDefault(); initAudio(); state.running ? stopJump() : startJump(); }
+            if (e.key.toLowerCase() === 'r') {
+                resetJump();
+            }
+        });
+    </script>
+</body>
+</html>

@@ -4,21 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Projection Tool v1</title>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    
-    <script type="importmap">
-        {
-            "imports": {
-                "react": "https://esm.sh/react@18.2.0",
-                "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
-                "three": "https://esm.sh/three@0.160.0",
-                "@react-three/fiber": "https://esm.sh/@react-three/fiber@8.15.16?external=react,react-dom,three",
-                "@react-three/drei": "https://esm.sh/@react-three/drei@9.99.0?external=react,react-dom,three,@react-three/fiber",
-                "lucide-react": "https://esm.sh/lucide-react@0.344.0?external=react"
-            }
-        }
-    </script>
+    <script src="lib/babel.min.js"></script>
+    <script src="lib/tailwind.js"></script>
+    <script src="lib/react.min.js"></script>
+    <script src="lib/react-dom.min.js"></script>
 
     <style>
         body, html { margin: 0; padding: 0; background-color: black; overflow: hidden; color: white; height: 100%; font-family: 'Inter', sans-serif; }
@@ -53,13 +42,63 @@
 <body>
     <div id="root"></div>
 
-    <script type="text/babel" data-type="module">
-        import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-        import { createRoot } from 'react-dom/client';
-        import * as THREE from 'three';
-        import { Canvas, useFrame } from '@react-three/fiber';
-        import { OrbitControls, PerspectiveCamera, Grid, Text, Line, Edges, Box } from '@react-three/drei';
-        import { Settings, Calculator, Move3d, Eye, EyeOff, Plus, Trash2, Target, Rotate3D, Ruler, Box as BoxIcon, Move, Grid3X3, QrCode, Folder, ChevronRight, ChevronDown, Palette, CheckCircle, Axis3d, MousePointer2, Clapperboard, Image as ImageIcon, Upload, Play, SkipBack, SkipForward, LayoutTemplate, MonitorOff, Film, Timer, Activity, Layers, Workflow, Link, X, Cable, Maximize, AlertTriangle, HardDrive, Database, Video, Blend } from 'lucide-react';
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef, useCallback } = React;
+        const { createRoot } = ReactDOM;
+
+        // --- 1. INLINE ICON LIBRARY (Replaces lucide-react) ---
+        const IconWrapper = ({ children, size = 24, className = "", ...props }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>{children}</svg>
+        );
+        
+        const Icons = {
+            Settings: (p) => <IconWrapper {...p}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></IconWrapper>,
+            Calculator: (p) => <IconWrapper {...p}><rect width="16" height="20" x="4" y="2" rx="2"/><line x1="8" x2="16" y1="6" y2="6"/><line x1="16" x2="16" y1="14" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></IconWrapper>,
+            Move3d: (p) => <IconWrapper {...p}><path d="M5 3v16h16"/><path d="m5 19 6-6"/><path d="m2 6 3-3 3 3"/><path d="m18 16 3 3-3 3"/></IconWrapper>,
+            Eye: (p) => <IconWrapper {...p}><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></IconWrapper>,
+            EyeOff: (p) => <IconWrapper {...p}><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7c.44 0 .87-.03 1.28-.09"/><line x1="2" x2="22" y1="2" y2="22"/></IconWrapper>,
+            Plus: (p) => <IconWrapper {...p}><path d="M5 12h14"/><path d="M12 5v14"/></IconWrapper>,
+            Trash2: (p) => <IconWrapper {...p}><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></IconWrapper>,
+            Target: (p) => <IconWrapper {...p}><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></IconWrapper>,
+            Rotate3D: (p) => <IconWrapper {...p}><path d="M16.466 7.5C15.643 4.237 13.952 2 12 2 9.239 2 7 6.477 7 12s2.239 10 5 10c.342 0 .677-.069 1-.2"/><path d="m15.194 13.707 3.814 1.86-1.86 3.814"/><path d="M19 15.57c-1.804.885-4.274 1.43-7 1.43-5.523 0-10-2.239-10-5s4.477-5 10-5c4.838 0 8.873 1.718 9.8 4"/></IconWrapper>,
+            Ruler: (p) => <IconWrapper {...p}><path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.41 2.41 0 0 1 0-3.4l2.6-2.6a2.41 2.41 0 0 1 3.4 0Z"/><path d="m14.5 12.5 2-2"/><path d="m11.5 9.5 2-2"/><path d="m8.5 6.5 2-2"/><path d="m17.5 15.5 2-2"/></IconWrapper>,
+            Box: (p) => <IconWrapper {...p}><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></IconWrapper>,
+            Move: (p) => <IconWrapper {...p}><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="19 9 22 12 19 15"/><polyline points="15 19 12 22 9 19"/><line x1="2" x2="22" y1="12" y2="12"/><line x1="12" x2="12" y1="2" y2="22"/></IconWrapper>,
+            Grid3X3: (p) => <IconWrapper {...p}><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/><path d="M15 3v18"/></IconWrapper>,
+            QrCode: (p) => <IconWrapper {...p}><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/></IconWrapper>,
+            Folder: (p) => <IconWrapper {...p}><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></IconWrapper>,
+            ChevronRight: (p) => <IconWrapper {...p}><path d="m9 18 6-6-6-6"/></IconWrapper>,
+            ChevronDown: (p) => <IconWrapper {...p}><path d="m6 9 6 6 6-6"/></IconWrapper>,
+            ChevronUp: (p) => <IconWrapper {...p}><path d="m18 15-6-6-6 6"/></IconWrapper>,
+            Palette: (p) => <IconWrapper {...p}><circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></IconWrapper>,
+            CheckCircle: (p) => <IconWrapper {...p}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></IconWrapper>,
+            Axis3d: (p) => <IconWrapper {...p}><path d="M4 4v16h16"/><path d="m4 20 7-7"/></IconWrapper>,
+            MousePointer2: (p) => <IconWrapper {...p}><path d="m12 6 4 6-2.29 2.29 4.29 4.29-1.41 1.41-4.29-4.29L10 18Z"/></IconWrapper>,
+            Clapperboard: (p) => <IconWrapper {...p}><path d="M20.2 6 3 11l-.9-2.4c-.5-1.1.2-2.4 1.3-2.9l13.2-4.8c1.1-.5 2.4.2 2.9 1.3l.7 1.8Z"/><path d="m6.2 5.3 3.1 3.9"/><path d="m12.4 3.4 3.1 4"/><path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></IconWrapper>,
+            Image: (p) => <IconWrapper {...p}><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></IconWrapper>,
+            Upload: (p) => <IconWrapper {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></IconWrapper>,
+            Play: (p) => <IconWrapper {...p}><polygon points="5 3 19 12 5 21 5 3"/></IconWrapper>,
+            SkipBack: (p) => <IconWrapper {...p}><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" x2="5" y1="19" y2="5"/></IconWrapper>,
+            SkipForward: (p) => <IconWrapper {...p}><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" x2="19" y1="5" y2="19"/></IconWrapper>,
+            LayoutTemplate: (p) => <IconWrapper {...p}><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></IconWrapper>,
+            MonitorOff: (p) => <IconWrapper {...p}><path d="M17 17H4a2 2 0 0 1-2-2V5c0-1.5 1-2 1-3"/><path d="M22 15V5a2 2 0 0 0-2-2H9"/><path d="M8 21h8"/><path d="M12 17v4"/><line x1="2" x2="22" y1="2" y2="22"/></IconWrapper>,
+            Film: (p) => <IconWrapper {...p}><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/></IconWrapper>,
+            Timer: (p) => <IconWrapper {...p}><line x1="10" x2="14" y1="2" y2="2"/><line x1="12" x2="15" y1="14" y2="11"/><circle cx="12" cy="14" r="8"/></IconWrapper>,
+            Activity: (p) => <IconWrapper {...p}><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></IconWrapper>,
+            Layers: (p) => <IconWrapper {...p}><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></IconWrapper>,
+            Workflow: (p) => <IconWrapper {...p}><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></IconWrapper>,
+            Link: (p) => <IconWrapper {...p}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></IconWrapper>,
+            X: (p) => <IconWrapper {...p}><path d="M18 6 6 18"/><path d="m6 6 18 18"/></IconWrapper>,
+            Cable: (p) => <IconWrapper {...p}><path d="M17 21v-2a2 2 0 0 1 2-2h2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M3 5v2a2 2 0 0 1-2 2H0"/><path d="M7 5v2a2 2 0 0 1-2 2H4"/><path d="M3 3v2"/><path d="M7 3v2"/><path d="M10 2v2a2 2 0 0 1-2 2h-2"/><path d="M17 2v2a2 2 0 0 1-2 2h-2"/><path d="M21 2v2a2 2 0 0 1-2 2h-2"/><path d="M12 22v-2"/><path d="M12 2v2"/></IconWrapper>,
+            Maximize: (p) => <IconWrapper {...p}><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></IconWrapper>,
+            AlertTriangle: (p) => <IconWrapper {...p}><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></IconWrapper>,
+            HardDrive: (p) => <IconWrapper {...p}><line x1="22" x2="22" y1="12" y2="12"/><path d="M2 12h20"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/></IconWrapper>,
+            Database: (p) => <IconWrapper {...p}><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></IconWrapper>,
+            Video: (p) => <IconWrapper {...p}><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></IconWrapper>,
+            Blend: (p) => <IconWrapper {...p}><circle cx="9" cy="9" r="7"/><circle cx="15" cy="15" r="7"/></IconWrapper>
+        };
+        
+        const { Settings, Calculator, Move3d, Eye, EyeOff, Plus, Trash2, Target, Rotate3D, Ruler, Box: BoxIcon, Move, Grid3X3, QrCode, Folder, ChevronRight, ChevronDown, ChevronUp, Palette, CheckCircle, Axis3d, MousePointer2, Clapperboard, Image: ImageIcon, Upload, Play, SkipBack, SkipForward, LayoutTemplate, MonitorOff, Film, Timer, Activity, Layers, Workflow, Link, X, Cable, Maximize, AlertTriangle, HardDrive, Database, Video, Blend } = Icons;
 
         // --- ICONS & HELPERS ---
         const FolderPlus = ({size}) => ( <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 10v6M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg> );
@@ -221,38 +260,6 @@
             return { x: tx, y: ty };
         };
 
-        const decomposeHomographyWithIntrinsics = (H_raw, throwRatio, widthPx, heightPx) => {
-            const fx = throwRatio * widthPx; const fy = fx; 
-            const cx = widthPx / 2; const cy = heightPx / 2;
-            const K = new THREE.Matrix3(); K.set(fx, 0, cx, 0, fy, cy, 0, 0, 1);
-            const K_inv = K.clone().invert();
-            const H_matrix = new THREE.Matrix3();
-            H_matrix.set(H_raw[0][0], H_raw[0][1], H_raw[0][2], H_raw[1][0], H_raw[1][1], H_raw[1][2], H_raw[2][0], H_raw[2][1], H_raw[2][2]);
-            const H_norm = H_matrix.clone().premultiply(K_inv);
-            const e = H_norm.elements; 
-            let h1 = new THREE.Vector3(e[0], e[1], e[2]);
-            let h2 = new THREE.Vector3(e[3], e[4], e[5]);
-            let h3 = new THREE.Vector3(e[6], e[7], e[8]);
-            const lambda = 1 / ((h1.length() + h2.length()) / 2);
-            h1.multiplyScalar(lambda); h2.multiplyScalar(lambda); h3.multiplyScalar(lambda);
-            const r1 = h1; const r2 = h2; const r3 = new THREE.Vector3().crossVectors(r1, r2).normalize(); const t = h3;
-            const worldToCamRaw = new THREE.Matrix4();
-            worldToCamRaw.set(r1.x, r2.x, r3.x, t.x, r1.y, r2.y, r3.y, t.y, r1.z, r2.z, r3.z, t.z, 0, 0, 0, 1);
-            const camToWorld = worldToCamRaw.clone().invert();
-            const position = new THREE.Vector3(); const quaternion = new THREE.Quaternion(); const scale = new THREE.Vector3();
-            camToWorld.decompose(position, quaternion, scale);
-            if (position.z < 0) { position.z *= -1; position.x *= -1; quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), Math.PI)); }
-            const up = new THREE.Vector3(0, 1, 0).applyQuaternion(quaternion);
-            if (up.y < 0) { quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), Math.PI)); }
-            const toWall = new THREE.Vector3().subVectors(new THREE.Vector3(0,0,0), position).normalize();
-            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion);
-            if (forward.dot(toWall) < 0) { quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), Math.PI)); }
-            const correctedCamToWorld = new THREE.Matrix4().compose(position, quaternion, scale);
-            const correctedWorldToCam = correctedCamToWorld.clone().invert();
-            const fov = 2 * Math.atan(1 / (2 * throwRatio)) * (180 / Math.PI);
-            return { position, quaternion, fov, camToWorldMatrix: correctedCamToWorld, worldToCamMatrix: correctedWorldToCam };
-        };
-
         const getCssMatrix = (dstPoints, width, height) => {
              const src = [{x:0, y:0}, {x:width, y:0}, {x:width, y:height}, {x:0, y:height}];
              const H = solveHomography(src, dstPoints);
@@ -261,73 +268,6 @@
         };
 
         // --- COMPONENTS ---
-
-        const ProjectorCamera = ({ pose }) => {
-            if (!pose) return null;
-            const dist = 3; const halfHeight = Math.tan(THREE.MathUtils.degToRad(pose.fov / 2)) * dist; const halfWidth = halfHeight * (16/9);
-            return (
-                <group position={pose.position} quaternion={pose.quaternion}>
-                    <arrowHelper args={[new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0, 0), 2, 0x00ffff, 0.4, 0.2]} />
-                    <Text position={[0, 0.5, 0]} fontSize={0.15} color="#aaa">TOP</Text>
-                    <mesh position={[0, 0, 0]}><boxGeometry args={[0.5, 0.3, 0.7]} /><meshStandardMaterial color="#333" /><Edges color="#666" /></mesh>
-                    <mesh position={[0, 0, -0.36]} rotation={[Math.PI/2, 0, 0]}><cylinderGeometry args={[0.12, 0.12, 0.1]} /><meshStandardMaterial color="#111" /><Edges color="#222" /></mesh>
-                    <group position={[0,0,0]}>
-                         <Line points={[ [0,0,0], [-halfWidth, -halfHeight, -dist], [0,0,0], [halfWidth, -halfHeight, -dist], [0,0,0], [halfWidth, halfHeight, -dist], [0,0,0], [-halfWidth, halfHeight, -dist] ]} color="cyan" opacity={0.3} transparent lineWidth={1} />
-                         <Line points={[ [-halfWidth, -halfHeight, -dist], [halfWidth, -halfHeight, -dist], [halfWidth, halfHeight, -dist], [-halfWidth, halfHeight, -dist], [-halfWidth, -halfHeight, -dist] ]} color="cyan" opacity={0.2} transparent lineWidth={1} />
-                    </group>
-                </group>
-            );
-        };
-        
-        const TexturedWall = ({ wall, cue }) => {
-            const [tex, setTex] = useState(null);
-            useEffect(() => {
-                setTex(null);
-            }, [cue, wall.id]);
-
-            return (
-                <mesh>
-                    <boxGeometry args={[wall.width, wall.height, 0.05]} /> 
-                    <meshStandardMaterial color={wall.color} transparent opacity={0.3} />
-                    <Edges color={wall.color} threshold={15} />
-                </mesh>
-            );
-        };
-
-        const PhysicalObjects = ({ walls, showGuides, currentCue }) => {
-            return (
-                <group>
-                      {walls.map((wall) => {
-                          const pos = [wall.pos.x, wall.pos.y, wall.pos.z];
-                          const rot = [THREE.MathUtils.degToRad(wall.rot.x), THREE.MathUtils.degToRad(wall.rot.y), THREE.MathUtils.degToRad(wall.rot.z)];
-                          return (
-                            <group key={wall.id} position={pos} rotation={rot}>
-                                <TexturedWall wall={wall} cue={currentCue} />
-                                <Text position={[0, wall.height/2 + 0.2, 0]} fontSize={0.2} color="white" outlineWidth={0.02} outlineColor="#000">{wall.name}</Text>
-                                {showGuides && <group><axesHelper args={[0.6]} /><Text position={[0, 0, 0.1]} fontSize={0.15} color="white" backgroundColor="black" fillOpacity={0.8}>{`(${wall.pos.x.toFixed(2)}, ${wall.pos.y.toFixed(2)}, ${wall.pos.z.toFixed(2)})`}</Text></group>}
-                            </group>
-                          )
-                      })}
-                </group>
-            )
-        }
-
-        const Scene3D = ({ walls, pose, calibrationWall, showGuides, currentCue }) => {
-            const floorY = -calibrationWall.height / 2;
-            return (
-                <>
-                    <color attach="background" args={['#202022']} /> 
-                    <PerspectiveCamera makeDefault position={[3, 3, 8]} fov={50} />
-                    <OrbitControls />
-                    <ambientLight intensity={0.8} />
-                    <directionalLight position={[5, 10, 5]} intensity={1} />
-                    <Grid position={[0, floorY, 0]} args={[20, 20]} cellSize={1} cellThickness={1} cellColor="#444" sectionColor="#666" fadeDistance={20} />
-                    {showGuides && <group position={[0,0,0]}><axesHelper args={[2]} /><Text position={[0.2, 2.2, 0]} fontSize={0.2} color="lime" outlineWidth={0.02} outlineColor="black">World Origin (0,0,0)</Text></group>}
-                    <PhysicalObjects walls={walls} showGuides={showGuides} currentCue={currentCue} />
-                    {pose && <ProjectorCamera pose={pose} walls={walls} />}
-                </>
-            );
-        };
 
         const PointHandle = ({ x, y, index, color, isSelected, onDrag, isMoveMode }) => {
             const [isDragging, setIsDragging] = useState(false);
@@ -639,7 +579,8 @@
 
         const ProjectedContent = ({ cueState, walls }) => {
             if(!cueState || !walls) return null;
-            const baseResolution = 1000; 
+            const width = 1920;
+            const height = 1080;
             return (
                 <div className="absolute inset-0 overflow-hidden pointer-events-none">
                     {walls.map(wall => {
@@ -647,10 +588,6 @@
                         if (!outputNode) return null;
                         const inputConn = cueState.connections?.find(c => c.to === outputNode.id);
                         if (!inputConn) return null;
-
-                        const aspect = wall.height > 0 ? wall.width / wall.height : 1;
-                        const width = baseResolution * aspect;
-                        const height = baseResolution;
 
                         const cssM = getCssMatrix(wall.points, width, height);
                         return (
@@ -1061,21 +998,66 @@
             );
         };
 
-        const FolderItem = ({ folder, walls, activeWallId, setActiveWallId, setWalls, setFolders }) => {
+        const WallStackVisualizer = ({ walls, activeWallId }) => {
+            if (walls.length === 0) return null;
+
+            return (
+                <div className="mt-4 pt-4 border-t border-zinc-700">
+                    <h3 className="text-xs font-bold text-gray-500 mb-3 flex items-center gap-1"><Layers size={12}/> STACKING ORDER (TOP &rarr; BOTTOM)</h3>
+                    <div className="relative h-24 bg-zinc-800/50 rounded-lg p-4 flex items-center justify-start overflow-x-auto">
+                        {walls.slice().reverse().map((wall, index) => (
+                            <div
+                                key={wall.id}
+                                title={`${wall.name} (Stack position ${walls.length - index})`}
+                                className={`absolute w-12 h-12 rounded border-2 transition-all duration-300 ease-out flex items-center justify-center text-white font-bold text-xs shadow-md ${wall.id === activeWallId ? 'border-blue-400 ring-2 ring-blue-500/50' : 'border-zinc-600 hover:border-zinc-400'}`}
+                                style={{
+                                    backgroundColor: wall.color,
+                                    left: `${10 + index * 15}%`,
+                                    zIndex: walls.length - index,
+                                    transform: `translateY(${wall.id === activeWallId ? '-8px' : '0px'}) scale(${wall.id === activeWallId ? '1.1' : '1'})`
+                                }}
+                            >
+                                {walls.length - index}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const WallItem = ({ wall, activeWallId, setActiveWallId, moveWall, deleteWall }) => {
+            return (
+                <div 
+                    onClick={() => setActiveWallId(wall.id)} 
+                    className={`flex justify-between items-center p-2 rounded text-xs cursor-pointer ${wall.id === activeWallId ? 'bg-zinc-700 text-white border border-zinc-600' : 'text-gray-400 hover:bg-zinc-800/50'}`}
+                >
+                    <div className="flex items-center gap-2 truncate">
+                        <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: wall.color }}></div>
+                        <span className="truncate">{wall.name}</span>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                        <div className="flex flex-col -my-1">
+                            <button onClick={(e) => {e.stopPropagation(); moveWall(wall.id, -1)}} className="p-0.5 rounded hover:bg-zinc-600 text-gray-400 hover:text-white" title="Move Up"><ChevronUp size={16}/></button>
+                            <button onClick={(e) => {e.stopPropagation(); moveWall(wall.id, 1)}} className="p-0.5 rounded hover:bg-zinc-600 text-gray-400 hover:text-white" title="Move Down"><ChevronDown size={16}/></button>
+                        </div>
+                        <button onClick={(e) => {e.stopPropagation(); deleteWall(wall.id, wall.name)}} className="p-1 rounded hover:bg-red-900/50 text-gray-500 hover:text-red-400" title="Delete Wall"><Trash2 size={14}/></button>
+                    </div>
+                </div>
+            );
+        };
+
+        const FolderItem = ({ folder, walls, activeWallId, setActiveWallId, setWalls, setFolders, moveWall, deleteWall }) => {
             const folderWalls = walls.filter(w => w.folderId === folder.id);
             return (
                 <div className="mb-2">
                     <div className="flex items-center gap-2 p-2 bg-zinc-800 hover:bg-zinc-700 rounded cursor-pointer text-xs font-bold text-gray-300" onClick={() => setFolders(prev => prev.map(f => f.id === folder.id ? {...f, isOpen: !f.isOpen} : f))}>
                         {folder.isOpen ? <ChevronDown size={14}/> : <ChevronRight size={14}/>} <Folder size={14} className="text-blue-400" /> {folder.name} <span className="ml-auto text-[10px] text-gray-500">{folderWalls.length}</span>
-                        <button onClick={(e) => {e.stopPropagation(); setFolders(prev => prev.filter(f => f.id !== folder.id)); setWalls(prev => prev.map(w => w.folderId === folder.id ? {...w, folderId: null} : w))}} className="text-gray-500 hover:text-red-400 ml-2"><Trash2 size={12}/></button>
+                        <button onClick={(e) => {e.stopPropagation(); if (confirm(`Delete folder "${folder.name}"? Walls inside will be ungrouped.`)) { setFolders(prev => prev.filter(f => f.id !== folder.id)); setWalls(prev => prev.map(w => w.folderId === folder.id ? {...w, folderId: null} : w)) }}} className="text-gray-500 hover:text-red-400 ml-2"><Trash2 size={12}/></button>
                     </div>
                     {folder.isOpen && (
                         <div className="ml-2 pl-2 border-l border-zinc-700 mt-1 space-y-1">
                             {folderWalls.map(wall => (
-                                <div key={wall.id} onClick={() => setActiveWallId(wall.id)} className={`flex justify-between items-center p-2 rounded text-xs cursor-pointer ${wall.id === activeWallId ? 'bg-zinc-700 text-white border border-zinc-600' : 'text-gray-400 hover:bg-zinc-800/50'}`}>
-                                    <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: wall.color }}></div>{wall.name}</div>
-                                    <button onClick={(e) => {e.stopPropagation(); setWalls(p => p.filter(w => w.id !== wall.id))}} className="hover:text-red-400"><Trash2 size={12}/></button>
-                                </div>
+                                <WallItem key={wall.id} wall={wall} activeWallId={activeWallId} setActiveWallId={setActiveWallId} moveWall={moveWall} deleteWall={deleteWall} />
                             ))}
                             {folderWalls.length === 0 && <div className="text-[10px] text-gray-600 p-2 italic">Empty Folder</div>}
                         </div>
@@ -1084,8 +1066,66 @@
             );
         };
 
+        const getEase = (t, type) => {
+            if (t < 0) return 0;
+            if (t > 1) return 1;
+            switch (type) {
+                case 'easeIn': return t * t;
+                case 'easeOut': return t * (2 - t);
+                case 'easeInOut': return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+                default: return t;
+            }
+        };
+
+        const TransitionEditor = ({ cue, updateCue }) => {
+            if (!cue) return <div className="h-full flex items-center justify-center text-gray-500 text-xs">Select a transition to edit</div>;
+
+            const duration = cue.transitionDuration ?? 1.0;
+            const delay = cue.transitionDelay ?? 0.0;
+            const ease = cue.transitionEase || 'linear';
+
+            const width = 600; const height = 200; const padding = 40;
+            const graphW = width - padding * 2; const graphH = height - padding * 2;
+            const totalTime = Math.max(duration + delay + 1, 5);
+            const steps = 100;
+            const points = [];
+            for (let i = 0; i <= steps; i++) {
+                const t = (i / steps) * totalTime;
+                let val = 0;
+                if (t >= delay) { const localT = duration > 0 ? (t - delay) / duration : 1; val = getEase(localT, ease); }
+                const x = padding + (t / totalTime) * graphW; const y = height - padding - (val * graphH);
+                points.push(`${x},${y}`);
+            }
+
+            return (
+                <div className="w-full h-full bg-zinc-900/90 p-6 flex gap-8 text-gray-300">
+                    <div className="w-64 flex flex-col gap-6 pt-2">
+                        <div><h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2"><Link size={16}/> TRANSITION SETTINGS</h3>
+                            <div className="space-y-4">
+                                <div><div className="flex justify-between mb-1"><label className="text-xs font-bold">Duration</label><span className="text-xs font-mono text-blue-400">{duration.toFixed(1)}s</span></div><input type="range" min="0" max="10" step="0.1" value={duration} onChange={(e) => updateCue({ transitionDuration: parseFloat(e.target.value) })} className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-blue-500" /></div>
+                                <div><div className="flex justify-between mb-1"><label className="text-xs font-bold">Delay</label><span className="text-xs font-mono text-orange-400">{delay.toFixed(1)}s</span></div><input type="range" min="0" max="5" step="0.1" value={delay} onChange={(e) => updateCue({ transitionDelay: parseFloat(e.target.value) })} className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-orange-500" /></div>
+                                <div><label className="text-xs font-bold block mb-2">Easing Curve</label><div className="grid grid-cols-2 gap-2">{['linear', 'easeIn', 'easeOut', 'easeInOut'].map(e => (<button key={e} onClick={() => updateCue({ transitionEase: e })} className={`px-3 py-2 rounded text-xs font-medium border transition-all ${ease === e ? 'bg-blue-600 border-blue-500 text-white' : 'bg-zinc-800 border-zinc-700 hover:bg-zinc-700'}`}>{e.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}</button>))}</div></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div className="flex-1 bg-zinc-950 rounded-xl border border-zinc-800 relative shadow-inner overflow-hidden">
+                        <div className="absolute top-3 left-4 text-[10px] font-mono text-zinc-500">OPACITY / TIME</div>
+                        <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="absolute inset-0">
+                            <line x1={padding} y1={height-padding} x2={width-padding} y2={height-padding} stroke="#333" strokeWidth="1" />
+                            <line x1={padding} y1={padding} x2={padding} y2={height-padding} stroke="#333" strokeWidth="1" />
+                            <path d={`M ${points.join(' L ')}`} fill="none" stroke="#60a5fa" strokeWidth="3" strokeLinecap="round" />
+                            <path d={`M ${points[0]} L ${points.join(' L ')} L ${points[points.length-1].split(',')[0]},${height-padding} Z`} fill="url(#gradient)" opacity="0.2" />
+                            <defs><linearGradient id="gradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#60a5fa" /><stop offset="100%" stopColor="transparent" /></linearGradient></defs>
+                            <line x1={padding + (delay / totalTime) * graphW} y1={padding} x2={padding + (delay / totalTime) * graphW} y2={height-padding} stroke="#fb923c" strokeWidth="1" strokeDasharray="4,4" />
+                            <line x1={padding + ((delay + duration) / totalTime) * graphW} y1={padding} x2={padding + ((delay + duration) / totalTime) * graphW} y2={height-padding} stroke="#fb923c" strokeWidth="1" strokeDasharray="4,4" />
+                        </svg>
+                    </div>
+                </div>
+            );
+        };
+
         const App = () => {
-            const [walls, setWalls] = useState([{ id: 1, name: "Anchor Wall", width: 3.0, height: 1.69, color: "#84cc16", isCalibrationTarget: true, folderId: null, pos: {x: 0, y: 0, z: 0}, rot: {x: 0, y: 0, z: 0}, points: [{ x: 100, y: 100 }, { x: 500, y: 100 }, { x: 500, y: 325 }, { x: 100, y: 325 }] }]);
+            const [walls, setWalls] = useState([{ id: 1, name: "Main Wall", color: "#84cc16", folderId: null, points: [{ x: 100, y: 100 }, { x: 500, y: 100 }, { x: 500, y: 325 }, { x: 100, y: 325 }] }]);
             const [folders, setFolders] = useState([]); 
             const [activeWallId, setActiveWallId] = useState(1);
             const [menuOpen, setMenuOpen] = useState(false);
@@ -1093,9 +1133,6 @@
             const [showGuides, setShowGuides] = useState(false); 
             const [showTexture, setShowTexture] = useState(true); 
             const [moveMode, setMoveMode] = useState(false);
-            const [pose, setPose] = useState(null);
-            const [throwRatio, setThrowRatio] = useState(1.2);
-            const [calibrationSuccess, setCalibrationSuccess] = useState(false);
             const fileInputRef = useRef(null);
             const [isFullscreen, setIsFullscreen] = useState(false);
             const [showNodeEditor, setShowNodeEditor] = useState(true);
@@ -1108,12 +1145,33 @@
             const [activeSelection, setActiveSelection] = useState({ type: 'cue', sceneId: 1, cueId: 1 });
             
             // Engine States
-            const [transitionProgress, setTransitionProgress] = useState(1);
+            const [transitionMix, setTransitionMix] = useState(1);
             const [prevCueState, setPrevCueState] = useState(null);
             const [currentCueState, setCurrentCueState] = useState(null);
             const requestRef = useRef();
             const startTimeRef = useRef();
             const saveTimeoutRef = useRef();
+
+            // Auto-hide textures/guides when entering scenes
+            const prevMenuTabRef = useRef(menuTab);
+            const [lastDisplayState, setLastDisplayState] = useState(null);
+
+            useEffect(() => {
+                if (prevMenuTabRef.current !== 'scenes' && menuTab === 'scenes') {
+                    setLastDisplayState({ showTexture, showGuides, moveMode });
+                    setShowTexture(false);
+                    setShowGuides(false);
+                    setMoveMode(false);
+                } else if (prevMenuTabRef.current === 'scenes' && menuTab !== 'scenes') {
+                    if (lastDisplayState) {
+                        setShowTexture(lastDisplayState.showTexture);
+                        setShowGuides(lastDisplayState.showGuides);
+                        setMoveMode(lastDisplayState.moveMode);
+                        setLastDisplayState(null);
+                    }
+                }
+                prevMenuTabRef.current = menuTab;
+            }, [menuTab, showTexture, showGuides, moveMode, lastDisplayState]);
 
             // Load Data on Startup
             useEffect(() => {
@@ -1123,7 +1181,6 @@
                         if (savedState) {
                             setWalls(savedState.walls || []);
                             setFolders(savedState.folders || []);
-                            setPose(savedState.pose);
                             
                             // Restore Asset URLs in Scenes
                             const restoredScenes = await Promise.all(savedState.scenes.map(async (scene) => {
@@ -1157,12 +1214,12 @@
             useEffect(() => {
                 if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
                 saveTimeoutRef.current = setTimeout(async () => {
-                    await db.saveState('project_data_v22', { walls, folders, scenes, pose });
+                    await db.saveState('project_data_v22', { walls, folders, scenes });
                     const usage = await db.getUsage();
                     setStorageUsage(usage);
                 }, 1000); // Debounce 1s
                 return () => clearTimeout(saveTimeoutRef.current);
-            }, [walls, folders, scenes, pose]);
+            }, [walls, folders, scenes]);
 
             useEffect(() => {
                 const handleFsChange = () => setIsFullscreen(!!document.fullscreenElement);
@@ -1171,7 +1228,6 @@
             }, []);
 
             const enterFullscreen = () => { document.documentElement.requestFullscreen().catch(e => console.log(e)); };
-            const sortedWalls = useMemo(() => [...walls].sort((a, b) => a.pos.z - b.pos.z), [walls]);
             const getCueData = (sId, cId) => { const s = scenes.find(x => x.id === sId); return s ? s.cues.find(x => x.id === cId) : null; };
             const targetCueId = activeSelection.type === 'cue' ? activeSelection.cueId : activeSelection.nextCueId;
             const currentCueObj = useMemo(() => getCueData(activeSelection.sceneId, targetCueId), [activeSelection, scenes]);
@@ -1185,11 +1241,23 @@
 
             const animateTransition = (time) => {
                 if (!startTimeRef.current) startTimeRef.current = time;
-                const duration = (currentCueObj?.transitionDuration || 0) * 1000; 
+                const duration = (currentCueObj?.transitionDuration || 0) * 1000;
+                const delay = (currentCueObj?.transitionDelay || 0) * 1000;
+                const totalDuration = duration + delay;
+                
                 const elapsed = time - startTimeRef.current;
-                let progress = duration > 0 ? Math.min(elapsed / duration, 1) : 1;
-                setTransitionProgress(progress);
-                if (progress < 1) { requestRef.current = requestAnimationFrame(animateTransition); }
+                
+                let mix = 1;
+                if (totalDuration > 0) {
+                    if (elapsed < delay) mix = 0;
+                    else mix = duration > 0 ? Math.min((elapsed - delay) / duration, 1) : 1;
+                }
+                
+                const ease = currentCueObj?.transitionEase || 'linear';
+                setTransitionMix(getEase(mix, ease));
+
+                if (elapsed < totalDuration) { requestRef.current = requestAnimationFrame(animateTransition); }
+                else { setTransitionMix(1); setPrevCueState(null); }
             };
 
             useEffect(() => {
@@ -1206,11 +1274,11 @@
                     if (k === 'm' && viewMode !== 'live') setShowGuides(p => !p); 
                     if (k === 't' && viewMode === '2d') setShowTexture(p => !p); 
                     if (k === 'w' && viewMode === '2d') setMoveMode(p => !p);
-                    if (k === 'z' || k === 'v') navigateCue(k === 'z' ? 1 : -1);
+                    if (k === 'z' || k === 'v' || e.key === 'ArrowRight' || e.key === 'ArrowLeft') navigateCue((k === 'z' || e.key === 'ArrowRight') ? 1 : -1);
                 };
                 window.addEventListener('keydown', handleKeyDown);
                 return () => window.removeEventListener('keydown', handleKeyDown);
-            }, [viewMode, activeState, scenes]);
+            }, [viewMode, activeState, scenes, activeSelection]);
 
             const navigateCue = (direction) => {
                 let flatList = [];
@@ -1222,25 +1290,41 @@
             };
 
             const updatePoint = (wallId, pointIndex, cx, cy) => { setWalls(prev => prev.map(w => { if (w.id !== wallId) return w; const currentPoints = [...w.points]; if (moveMode) { const prevX = currentPoints[pointIndex].x; const prevY = currentPoints[pointIndex].y; const dx = cx - prevX; const dy = cy - prevY; const newPoints = currentPoints.map(p => ({ x: p.x + dx, y: p.y + dy })); return { ...w, points: newPoints }; } else { currentPoints[pointIndex] = { x: cx, y: cy }; return { ...w, points: currentPoints }; } })); };
-            const updateTransform = (wallId, type, axis, val) => { setWalls(prev => prev.map(w => w.id !== wallId ? w : { ...w, [type]: { ...w[type], [axis]: parseFloat(val) || 0 } })); };
-            const calibrate = () => { const anchor = walls.find(w => w.isCalibrationTarget); if (!anchor) return; const halfW = anchor.width / 2; const halfH = anchor.height / 2; const worldPoints = [{ x: -halfW, y: halfH }, { x: halfW, y: halfH }, { x: halfW, y: -halfH }, { x: -halfW, y: -halfH }]; const H_raw = solveHomography(worldPoints, anchor.points); const anchorResult = decomposeHomographyWithIntrinsics(H_raw, throwRatio, window.innerWidth, window.innerHeight); setPose(anchorResult); const newWalls = walls.map(wall => { if (wall.isCalibrationTarget) return wall; const wHalfW = wall.width / 2; const wHalfH = wall.height / 2; const wWorldPoints = [{ x: -wHalfW, y: wHalfH }, { x: wHalfW, y: wHalfH }, { x: wHalfW, y: -wHalfH }, { x: -wHalfW, y: -wHalfH }]; const H_wall = solveHomography(wWorldPoints, wall.points); const wallResult = decomposeHomographyWithIntrinsics(H_wall, throwRatio, window.innerWidth, window.innerHeight); const T_cam_to_anchor = anchorResult.camToWorldMatrix; const T_wall_to_cam = wallResult.worldToCamMatrix; const T_wall_to_anchor = T_cam_to_anchor.clone().multiply(T_wall_to_cam); const pos = new THREE.Vector3(); const quat = new THREE.Quaternion(); const scale = new THREE.Vector3(); T_wall_to_anchor.decompose(pos, quat, scale); const euler = new THREE.Euler().setFromQuaternion(quat); return { ...wall, pos: { x: pos.x, y: pos.y, z: pos.z }, rot: { x: THREE.MathUtils.radToDeg(euler.x), y: THREE.MathUtils.radToDeg(euler.y), z: THREE.MathUtils.radToDeg(euler.z) } }; }); setWalls(newWalls); setCalibrationSuccess(true); setTimeout(() => setCalibrationSuccess(false), 2000); };
             const addFolder = () => { const newId = Math.max(0, ...folders.map(f => f.id)) + 1; setFolders(prev => [...prev, {id: newId, name: `Group ${newId}`, isOpen: true}]); };
             const addScene = () => { const newId = Math.max(0, ...scenes.map(s => s.id)) + 1; setScenes(prev => [...prev, { id: newId, name: `Act ${newId}`, cues: [{ id: 1, name: "Cue 1", type: 'standard' }] }]); };
             const addCue = (sceneId) => { setScenes(prev => prev.map(s => { if (s.id !== sceneId) return s; const newCueId = Math.max(0, ...s.cues.map(c => c.id)) + 1; return { ...s, cues: [...s.cues, { id: newCueId, name: `Cue ${newCueId}`, type: 'standard' }] }; })); };
             const resetData = async () => { if(confirm("This will delete all saved data and images. Are you sure?")) { await db.clearAll(); window.location.reload(); } };
 
+            const deleteWall = (id, name) => {
+                if (confirm(`Are you sure you want to delete the wall "${name}"?`)) {
+                    setWalls(p => p.filter(w => w.id !== id));
+                }
+            };
+
+            const moveWall = (id, direction) => {
+                setWalls(prev => {
+                    const index = prev.findIndex(w => w.id === id);
+                    if (index === -1) return prev;
+                    const newIndex = index + direction;
+                    if (newIndex < 0 || newIndex >= prev.length) return prev;
+                    const newWalls = [...prev];
+                    [newWalls[index], newWalls[newIndex]] = [newWalls[newIndex], newWalls[index]];
+                    return newWalls;
+                });
+            };
+
             const activeWall = walls.find(w => w.id === activeWallId);
 
             // --- RENDERER with TRANSITION LOGIC ---
             const renderSVG = (isLive) => (
-                <svg className="w-full h-full" style={{backgroundColor: (showTexture || isLive) ? 'black' : 'transparent'}}>
+                <svg className="w-full h-full" style={{backgroundColor: (showTexture || isLive || menuTab === 'scenes') ? 'black' : 'transparent'}}>
                     {/* ... (SVG Defs and Grid Patterns omitted for brevity but present in rendering) ... */}
                     <defs>
                          <pattern id="smallGrid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5"/></pattern>
                          <pattern id="grid" width="100" height="100" patternUnits="userSpaceOnUse"><rect width="100" height="100" fill="url(#smallGrid)"/><path d="M 100 0 L 0 0 0 100" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="1"/></pattern>
                     </defs>
-                    {showGuides && !isLive && (<><rect width="100%" height="100%" fill="url(#grid)" pointerEvents="none" /><line x1="50%" y1="0" x2="50%" y2="100%" stroke="cyan" strokeOpacity="0.5" strokeDasharray="5,5" pointerEvents="none" /><line x1="0" y1="50%" x2="100%" y2="50%" stroke="cyan" strokeOpacity="0.5" strokeDasharray="5,5" pointerEvents="none" /></>)}
-                    {sortedWalls.map(wall => {
+                    {showGuides && !isLive && menuTab !== 'scenes' && (<><rect width="100%" height="100%" fill="url(#grid)" pointerEvents="none" /><line x1="50%" y1="0" x2="50%" y2="100%" stroke="cyan" strokeOpacity="0.5" strokeDasharray="5,5" pointerEvents="none" /><line x1="0" y1="50%" x2="100%" y2="50%" stroke="cyan" strokeOpacity="0.5" strokeDasharray="5,5" pointerEvents="none" /></>)}
+                    {walls.map(wall => {
                         const getWallStyle = (cueState) => {
                             if (!cueState) return { fill: wall.color, stroke: isLive ? 'none' : wall.color };
                             return { fill: wall.color, stroke: isLive ? 'none' : wall.color };
@@ -1248,21 +1332,21 @@
                         const currStyle = getWallStyle(currentCueState);
                         const baseOpacity = isLive ? 1 : (wall.id === activeWallId ? 0.5 : 0.1);
                         
-                        const isProjecting = (isLive || showTexture) && currentCueState?.nodes?.some(n => n.type === 'output' && n.data.wallId === wall.id && currentCueState.connections?.some(c => c.to === n.id));
+                        const isProjecting = (isLive || showTexture || menuTab === 'scenes') && currentCueState?.nodes?.some(n => n.type === 'output' && n.data.wallId === wall.id && currentCueState.connections?.some(c => c.to === n.id));
                         
                         return (
                             <g key={wall.id} onClick={(e) => { if(!isLive) { e.stopPropagation(); setActiveWallId(wall.id); }}}>
                                 {isProjecting && ( <path d={`M ${wall.points[0].x} ${wall.points[0].y} L ${wall.points[1].x} ${wall.points[1].y} L ${wall.points[2].x} ${wall.points[2].y} L ${wall.points[3].x} ${wall.points[3].y} Z`} fill="transparent" stroke="none" /> )}
-                                {!isProjecting && (isLive || showTexture) && ( <path d={`M ${wall.points[0].x} ${wall.points[0].y} L ${wall.points[1].x} ${wall.points[1].y} L ${wall.points[2].x} ${wall.points[2].y} L ${wall.points[3].x} ${wall.points[3].y} Z`} fill={currStyle.fill} fillOpacity={baseOpacity} stroke="none" /> )}
-                                {(!isLive && !showTexture) && ( <path d={`M ${wall.points[0].x} ${wall.points[0].y} L ${wall.points[1].x} ${wall.points[1].y} L ${wall.points[2].x} ${wall.points[2].y} L ${wall.points[3].x} ${wall.points[3].y} Z`} fill={currStyle.fill} fillOpacity={baseOpacity} stroke={currStyle.stroke} strokeWidth={wall.id === activeWallId ? 2 : 1} strokeDasharray={wall.isCalibrationTarget ? "0" : "5,5"} /> )}
+                                {!isProjecting && (isLive || showTexture || menuTab === 'scenes') && ( <path d={`M ${wall.points[0].x} ${wall.points[0].y} L ${wall.points[1].x} ${wall.points[1].y} L ${wall.points[2].x} ${wall.points[2].y} L ${wall.points[3].x} ${wall.points[3].y} Z`} fill={currStyle.fill} fillOpacity={baseOpacity} stroke="none" /> )}
+                                {(!isLive && !showTexture && menuTab !== 'scenes') && ( <path d={`M ${wall.points[0].x} ${wall.points[0].y} L ${wall.points[1].x} ${wall.points[1].y} L ${wall.points[2].x} ${wall.points[2].y} L ${wall.points[3].x} ${wall.points[3].y} Z`} fill={currStyle.fill} fillOpacity={baseOpacity} stroke={currStyle.stroke} strokeWidth={wall.id === activeWallId ? 2 : 1} strokeDasharray="5,5" /> )}
                                 {((isLive && currentCueObj?.type === 'test') || (!isLive && showTexture)) && <WarpedTextureGrid wallPoints={wall.points} />}
-                                {(!isLive && (wall.id === activeWallId) && !showTexture) && wall.points.map((p, i) => ( <PointHandle key={`handle-${wall.id}-${i}`} index={i} x={p.x} y={p.y} color={wall.color} isSelected={true} onDrag={(idx, x, y) => updatePoint(wall.id, idx, x, y)} isMoveMode={moveMode} /> ))}
-                                {showGuides && !isLive && wall.points.map((p, i) => ( <text key={`guide-lbl-${i}`} x={p.x + 12} y={p.y + 4} fill="lime" fontSize="9" fontFamily="monospace" className="pointer-events-none select-none shadow-black drop-shadow-md" style={{textShadow: '1px 1px 0 #000'}}> {Math.round(p.x)},{Math.round(p.y)} </text> ))}
-                                {showGuides && !isLive && ( <g pointerEvents="none"> <line x1={wall.points[0].x} y1={wall.points[0].y} x2={wall.points[2].x} y2={wall.points[2].y} stroke="cyan" strokeWidth="1" strokeOpacity="0.5" strokeDasharray="4,4" /> <line x1={wall.points[1].x} y1={wall.points[1].y} x2={wall.points[3].x} y2={wall.points[3].y} stroke="cyan" strokeWidth="1" strokeOpacity="0.5" strokeDasharray="4,4" /> </g> )}
+                                {(!isLive && (wall.id === activeWallId) && !showTexture && menuTab !== 'scenes') && wall.points.map((p, i) => ( <PointHandle key={`handle-${wall.id}-${i}`} index={i} x={p.x} y={p.y} color={wall.color} isSelected={true} onDrag={(idx, x, y) => updatePoint(wall.id, idx, x, y)} isMoveMode={moveMode} /> ))}
+                                {showGuides && !isLive && menuTab !== 'scenes' && wall.points.map((p, i) => ( <text key={`guide-lbl-${i}`} x={p.x + 12} y={p.y + 4} fill="lime" fontSize="9" fontFamily="monospace" className="pointer-events-none select-none shadow-black drop-shadow-md" style={{textShadow: '1px 1px 0 #000'}}> {Math.round(p.x)},{Math.round(p.y)} </text> ))}
+                                {showGuides && !isLive && menuTab !== 'scenes' && ( <g pointerEvents="none"> <line x1={wall.points[0].x} y1={wall.points[0].y} x2={wall.points[2].x} y2={wall.points[2].y} stroke="cyan" strokeWidth="1" strokeOpacity="0.5" strokeDasharray="4,4" /> <line x1={wall.points[1].x} y1={wall.points[1].y} x2={wall.points[3].x} y2={wall.points[3].y} stroke="cyan" strokeWidth="1" strokeOpacity="0.5" strokeDasharray="4,4" /> </g> )}
                             </g>
                         );
                     })}
-                    {(!isLive && activeWall && !showTexture) && activeWall.points.map((p, i) => ( <PointHandle key={`handle-${activeWall.id}-${i}`} index={i} x={p.x} y={p.y} color={activeWall.color} isSelected={true} onDrag={(idx, x, y) => updatePoint(activeWall.id, idx, x, y)} isMoveMode={moveMode} /> ))}
+                    {(!isLive && activeWall && !showTexture && menuTab !== 'scenes') && activeWall.points.map((p, i) => ( <PointHandle key={`handle-${activeWall.id}-${i}`} index={i} x={p.x} y={p.y} color={activeWall.color} isSelected={true} onDrag={(idx, x, y) => updatePoint(activeWall.id, idx, x, y)} isMoveMode={moveMode} /> ))}
                 </svg>
             );
 
@@ -1295,7 +1379,7 @@
                     )}
 
                     {viewMode !== 'live' && (
-                        <div className="absolute top-4 right-4 pointer-events-none select-none z-50 flex flex-col items-end gap-1">
+                        <div className="absolute top-16 right-4 pointer-events-none select-none z-50 flex flex-col items-end gap-1">
                             <div className="text-[10px] text-gray-400 bg-black/50 px-2 py-1 rounded backdrop-blur">CURRENT</div>
                             <div className="text-xl font-bold text-white drop-shadow-md">{currentCueObj?.name || "No Cue"}</div>
                             <div className="text-xs text-gray-300 bg-purple-900/50 px-2 py-0.5 rounded border border-purple-500/30">
@@ -1307,7 +1391,14 @@
                     <div className={`absolute inset-0 h-full z-0`}>
                         {viewMode === '2d' && (
                             <div className="absolute inset-0 z-10" onClick={() => setActiveWallId(null)}>
-                                {(showTexture || viewMode === 'live') && <ProjectedContent cueState={currentCueState} walls={walls} />}
+                            {(showTexture || viewMode === 'live' || menuTab === 'scenes') && (
+                                <>
+                                    {prevCueState && transitionMix < 1 && (
+                                        <div className="absolute inset-0 pointer-events-none" style={{ opacity: 1 - transitionMix }}><ProjectedContent cueState={prevCueState} walls={walls} /></div>
+                                    )}
+                                    <div className="absolute inset-0 pointer-events-none" style={{ opacity: transitionMix }}><ProjectedContent cueState={currentCueState} walls={walls} /></div>
+                                </>
+                            )}
                                 {renderSVG(false)}
                                 <div className="absolute top-4 left-4 pointer-events-none select-none drop-shadow-md z-50">
                                     <h1 className={`text-xl font-bold tracking-wider ${showTexture ? 'text-zinc-600' : 'text-white'}`}>MAPPING STUDIO</h1>
@@ -1322,36 +1413,44 @@
                         )}
                         {viewMode === 'live' && (
                             <div className="absolute inset-0 z-50 cursor-none bg-black">
+                            {prevCueState && transitionMix < 1 && (
+                                <div className="absolute inset-0 pointer-events-none" style={{ opacity: 1 - transitionMix }}><ProjectedContent cueState={prevCueState} walls={walls} /></div>
+                            )}
+                            <div className="absolute inset-0 pointer-events-none" style={{ opacity: transitionMix }}>
                                 <ProjectedContent cueState={currentCueState} walls={walls} />
-                                {renderSVG(true)}
                             </div>
-                        )}
-                        {viewMode === '3d' && (
-                            <div className="absolute inset-0 z-10">
-                                 <Canvas><Scene3D walls={walls} pose={pose} calibrationWall={walls.find(w => w.isCalibrationTarget) || walls[0]} showGuides={showGuides} currentCue={currentCueState} /></Canvas>
-                                 <div className="absolute top-4 left-4 pointer-events-none select-none drop-shadow-md z-50"><h1 className="text-xl font-bold text-lime-400">3D SIMULATION</h1></div>
+                                {renderSVG(true)}
                             </div>
                         )}
                     </div>
 
-                    {menuTab === 'scenes' && viewMode !== 'live' && showNodeEditor && (
+                    {menuTab === 'scenes' && viewMode !== 'live' && (
                         <div className="absolute bottom-0 left-0 right-0 h-[45%] z-30 border-t border-zinc-700/30 bg-zinc-900/50 backdrop-blur-md">
-                            <NodeEditor activeSelection={activeSelection} currentCue={currentCueObj} updateCueData={updateCueData} walls={walls} setWalls={setWalls} />
+                            {activeSelection.type === 'cue' && showNodeEditor && (
+                                <NodeEditor activeSelection={activeSelection} currentCue={currentCueObj} updateCueData={updateCueData} walls={walls} setWalls={setWalls} />
+                            )}
+                            {activeSelection.type === 'transition' && (
+                                <TransitionEditor cue={currentCueObj} updateCue={updateCueData} />
+                            )}
                         </div>
                     )}
 
                     {menuOpen && viewMode !== 'live' && (
                         <div className="absolute right-4 top-4 bottom-4 w-64 bg-zinc-900/95 backdrop-blur border border-zinc-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
+                            <div className="p-4 pb-0">
+                                <button 
+                                    onClick={() => {
+                                        setViewMode('live');
+                                        setMenuOpen(false);
+                                    }}
+                                    className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-lg shadow-lg flex items-center justify-center gap-2 transition-transform hover:scale-105"
+                                >
+                                    <Play size={20} fill="currentColor" /> GO LIVE
+                                </button>
+                            </div>
                             <div className="p-4 border-b border-zinc-700 flex justify-between items-center bg-zinc-900">
                                 <span className="font-bold flex items-center gap-2"> <Settings size={18} /> Configuration </span>
                                 <button onClick={() => setMenuOpen(false)} className="text-gray-400 hover:text-white">&times;</button>
-                            </div>
-                            <div className="px-4 pt-4">
-                                <select value={viewMode} onChange={(e) => { setViewMode(e.target.value); if(e.target.value === 'live') setMenuOpen(false); }} className="w-full bg-zinc-800 border border-zinc-600 rounded p-2 text-sm font-bold text-white outline-none focus:border-blue-500">
-                                    <option value="2d">Mapping Studio (2D)</option>
-                                    <option value="3d">Simulation (3D)</option>
-                                    <option value="live">🔴 Live Presentation</option>
-                                </select>
                             </div>
                             <div className="flex border-b border-zinc-800 mt-4">
                                 <button onClick={() => setMenuTab('config')} className={`flex-1 py-2 text-xs font-bold ${menuTab === 'config' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-500 hover:text-gray-300'}`}>Geometry</button>
@@ -1361,16 +1460,12 @@
                             <div className="flex-1 overflow-y-auto p-4 space-y-6">
                                 {menuTab === 'config' && (
                                     <>
-                                        <button onClick={calibrate} className={`w-full p-2 rounded text-sm font-medium flex items-center justify-center gap-2 transition-all duration-300 ${calibrationSuccess ? 'bg-green-600 hover:bg-green-500 text-white scale-105 shadow-lg shadow-green-900/50' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}> {calibrationSuccess ? <><CheckCircle size={16} className="animate-scale" /> Done!</> : <><Calculator size={16} /> Calibrate Pose</>} </button>
-                                        <div className="flex gap-2">
-                                            {viewMode === '3d' && (
-                                                <button onClick={() => setShowGuides(p => !p)} className={`w-full p-2 rounded text-xs flex items-center justify-center gap-1 border transition-colors ${showGuides ? 'bg-blue-900/50 border-blue-500 text-blue-200' : 'bg-zinc-800 border-zinc-700 text-gray-300'}`}> <Grid3X3 size={14} /> Guides </button>
-                                            )}
-                                        </div>
                                         {viewMode === '2d' && (<div className="grid grid-cols-3 gap-2"><button onClick={() => setMoveMode(p => !p)} className={`p-2 rounded text-xs flex items-center justify-center gap-1 border transition-colors ${moveMode ? 'bg-orange-600 border-orange-400 text-white' : 'bg-zinc-800 border-zinc-700 text-gray-300'}`}> <Move size={14} /> Move </button><button onClick={() => setShowGuides(p => !p)} className={`p-2 rounded text-xs flex items-center justify-center gap-1 border transition-colors ${showGuides ? 'bg-blue-900/50 border-blue-500 text-blue-200' : 'bg-zinc-800 border-zinc-700 text-gray-300'}`}> <Grid3X3 size={14} /> Guide </button><button onClick={() => setShowTexture(p => !p)} className={`p-2 rounded text-xs flex items-center justify-center gap-1 border transition-colors ${showTexture ? 'bg-white text-black border-white font-bold' : 'bg-zinc-800 border-zinc-700 text-gray-300'}`}> <QrCode size={14} /> Tex </button></div>)}
-                                        <div className="bg-zinc-800/50 p-3 rounded-lg border border-zinc-700"><div className="flex justify-between text-xs text-gray-400 mb-2"><span>Throw Ratio</span> <span className="text-white">{throwRatio}</span></div><input type="range" min="0.5" max="3.0" step="0.1" value={throwRatio} onChange={(e) => setThrowRatio(parseFloat(e.target.value))} className="w-full h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-500" /></div>
-                                        {activeWall && (<div className="space-y-3 bg-zinc-900 border border-zinc-700 p-3 rounded-lg"><div className="flex items-center gap-2 mb-2 pb-2 border-b border-zinc-800"><div className="w-3 h-3 rounded-full" style={{ backgroundColor: activeWall.color }}></div><input type="text" value={activeWall.name} onChange={(e) => setWalls(p => p.map(w => w.id === activeWall.id ? { ...w, name: e.target.value } : w))} className="bg-transparent border-none outline-none text-sm font-bold text-white w-full" />{activeWall.isCalibrationTarget && <span className="text-[10px] bg-lime-900 text-lime-300 px-1 rounded whitespace-nowrap">ANCHOR</span>}</div><div className="grid grid-cols-2 gap-2"><div> <label className="text-[10px] text-gray-500">Width</label> <input type="number" value={activeWall.width} onChange={(e) => setWalls(p => p.map(w => w.id === activeWall.id ? { ...w, width: parseFloat(e.target.value) } : w))} className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs" /> </div><div> <label className="text-[10px] text-gray-500">Height</label> <input type="number" value={activeWall.height} onChange={(e) => setWalls(p => p.map(w => w.id === activeWall.id ? { ...w, height: parseFloat(e.target.value) } : w))} className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs" /> </div></div>{!activeWall.isCalibrationTarget && (<div className="grid grid-cols-2 gap-2 mt-1"><div><label className="text-[10px] text-gray-500 flex items-center gap-1 mb-1"><Folder size={10}/> Group</label><select value={activeWall.folderId || ""} onChange={(e) => setWalls(p => p.map(w => w.id === activeWall.id ? { ...w, folderId: e.target.value ? parseInt(e.target.value) : null } : w))} className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white outline-none"><option value="">None</option>{folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}</select></div><div><label className="text-[10px] text-gray-500 flex items-center gap-1 mb-1"><Palette size={10}/> Color</label><div className="flex items-center gap-2 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5"><input type="color" value={activeWall.color} onChange={(e) => setWalls(p => p.map(w => w.id === activeWall.id ? { ...w, color: e.target.value } : w))} className="w-4 h-4 p-0 border-none bg-transparent cursor-pointer" /><span className="text-xs text-gray-400 font-mono">{activeWall.color}</span></div></div></div>)}</div>)}
-                                        <div className="space-y-2"><div className="flex justify-between items-center"><h3 className="text-xs font-bold text-gray-500">OBJECTS</h3><div className="flex gap-1"><button onClick={addFolder} className="text-xs bg-zinc-800 hover:bg-zinc-700 px-2 py-1 rounded flex items-center gap-1" title="New Group"> <FolderPlus size={12} /> </button><button onClick={() => { const newId = Math.max(...walls.map(w => w.id)) + 1; setWalls(p => [...p, { id: newId, name: `Obj ${newId}`, width: 1, height: 1, color: `hsl(${Math.random()*360},70%,60%)`, isCalibrationTarget: false, folderId: null, pos: {x:0,y:0,z:1}, rot: {x:0,y:0,z:0}, points: [{x:300,y:300},{x:400,y:300},{x:400,y:400},{x:300,y:400}] }]); }} className="text-xs bg-zinc-800 hover:bg-zinc-700 px-2 py-1 rounded flex items-center gap-1" title="New Object"> <Plus size={12} /> </button></div></div>{walls.filter(w => w.isCalibrationTarget).map(wall => (<div key={wall.id} onClick={() => setActiveWallId(wall.id)} className={`flex justify-between items-center p-2 rounded text-xs cursor-pointer border-l-2 ${wall.id === activeWallId ? 'bg-zinc-800 text-white border-lime-500' : 'text-gray-400 hover:bg-zinc-800/50 border-transparent'}`}><div className="flex items-center gap-2 font-bold text-lime-400"><Target size={12} /> {wall.name}</div></div>))}{folders.map(folder => (<FolderItem key={folder.id} folder={folder} walls={walls} activeWallId={activeWallId} setActiveWallId={setActiveWallId} setWalls={setWalls} setFolders={setFolders} />))}{walls.filter(w => !w.isCalibrationTarget && w.folderId === null).map(wall => (<div key={wall.id} onClick={() => setActiveWallId(wall.id)} className={`flex justify-between items-center p-2 rounded text-xs cursor-pointer ${wall.id === activeWallId ? 'bg-zinc-800 text-white border border-zinc-600' : 'text-gray-400 hover:bg-zinc-800/50'}`}><div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: wall.color }}></div>{wall.name}</div><button onClick={(e) => {e.stopPropagation(); setWalls(p => p.filter(w => w.id !== wall.id))}} className="hover:text-red-400"><Trash2 size={12}/></button></div>))}</div>
+                                        {activeWall && (<div className="space-y-3 bg-zinc-900 border border-zinc-700 p-3 rounded-lg"><div className="flex items-center gap-2 mb-2 pb-2 border-b border-zinc-800"><div className="w-3 h-3 rounded-full" style={{ backgroundColor: activeWall.color }}></div><input type="text" value={activeWall.name} onChange={(e) => setWalls(p => p.map(w => w.id === activeWall.id ? { ...w, name: e.target.value } : w))} className="bg-transparent border-none outline-none text-sm font-bold text-white w-full" /></div><div className="grid grid-cols-2 gap-2 mt-1"><div><label className="text-[10px] text-gray-500 flex items-center gap-1 mb-1"><Folder size={10}/> Group</label><select value={activeWall.folderId || ""} onChange={(e) => setWalls(p => p.map(w => w.id === activeWall.id ? { ...w, folderId: e.target.value ? parseInt(e.target.value) : null } : w))} className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white outline-none"><option value="">None</option>{folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}</select></div><div><label className="text-[10px] text-gray-500 flex items-center gap-1 mb-1"><Palette size={10}/> Color</label><div className="flex items-center gap-2 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5"><input type="color" value={activeWall.color} onChange={(e) => setWalls(p => p.map(w => w.id === activeWall.id ? { ...w, color: e.target.value } : w))} className="w-4 h-4 p-0 border-none bg-transparent cursor-pointer" /><span className="text-xs text-gray-400 font-mono">{activeWall.color}</span></div></div></div></div>)}
+                                        <div className="space-y-2"><div className="flex justify-between items-center"><h3 className="text-xs font-bold text-gray-500">OBJECTS</h3><div className="flex gap-1"><button onClick={addFolder} className="text-xs bg-zinc-800 hover:bg-zinc-700 px-2 py-1 rounded flex items-center gap-1" title="New Group"> <FolderPlus size={12} /> </button><button onClick={() => { const newId = Math.max(0, ...walls.map(w => w.id)) + 1; setWalls(p => [...p, { id: newId, name: `Obj ${newId}`, color: `hsl(${Math.random()*360},70%,60%)`, folderId: null, points: [{x:300,y:300},{x:400,y:300},{x:400,y:400},{x:300,y:400}] }]); }} className="text-xs bg-zinc-800 hover:bg-zinc-700 px-2 py-1 rounded flex items-center gap-1" title="New Object"> <Plus size={12} /> </button></div></div>{folders.map(folder => (<FolderItem key={folder.id} folder={folder} walls={walls} activeWallId={activeWallId} setActiveWallId={setActiveWallId} setWalls={setWalls} setFolders={setFolders} moveWall={moveWall} deleteWall={deleteWall} />))}{walls.filter(w => w.folderId === null).map(wall => (<WallItem key={wall.id} wall={wall} activeWallId={activeWallId} setActiveWallId={setActiveWallId} moveWall={moveWall} deleteWall={deleteWall} />))}</div>
+                                        
+                                        <WallStackVisualizer walls={walls} activeWallId={activeWallId} />
+
                                         {/* STORAGE SECTION */}
                                         <div className="mt-4 pt-4 border-t border-zinc-700">
                                             <div className="flex justify-between items-center mb-2">
@@ -1395,7 +1490,7 @@
                                         <div className="space-y-1">
                                             <div className="flex justify-between items-center mb-2">
                                                 <h3 className="text-xs font-bold text-gray-400 uppercase">Cue List</h3>
-                                                <button onClick={addScene} className="text-xs bg-purple-600 hover:bg-purple-500 px-2 py-1 rounded flex items-center gap-1 text-white ml-2"><Plus size={12}/> Scene</button>
+                                                <button onClick={addScene} className="text-xs bg-purple-600 hover:bg-purple-500 px-2 py-1 rounded flex items-center gap-1 text-white ml-2"><Plus size={12}/> Act</button>
                                             </div>
                                             {scenes.map((scene, sIdx) => (
                                                 <div key={scene.id} className="mb-3">
