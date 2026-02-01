@@ -532,7 +532,7 @@
 
         // --- RENDER ENGINE V22 ---
 
-        const RenderNode = ({ nodeId, nodes, connections, resolution, wallColor }) => {
+        const RenderNode = ({ nodeId, nodes, connections, resolution, wallColor, isLive, isTransitioning }) => {
             const node = nodes.find(n => n.id === nodeId);
             if (!node) return null;
 
@@ -565,7 +565,7 @@
                 const style = getStyle();
                 return (
                     <div style={{width: '100%', height: '100%', position: 'relative', backgroundColor: 'black'}}>
-                        {wallColor && (
+                        {wallColor && !isLive && !isTransitioning && (
                             <div className="zebra-pattern absolute inset-0" style={{
                                 backgroundImage: `repeating-linear-gradient(45deg, ${wallColor} 0, ${wallColor} 10px, transparent 10px, transparent 20px)`
                             }}></div>
@@ -587,7 +587,7 @@
                 return (
                     <div style={{position: 'relative', width: '100%', height: '100%'}}>
                         <div style={{position: 'absolute', inset: 0}}>
-                            {baseConn && <RenderNode nodeId={baseConn.from} nodes={nodes} connections={connections} resolution={resolution} wallColor={wallColor} />}
+                            {baseConn && <RenderNode nodeId={baseConn.from} nodes={nodes} connections={connections} resolution={resolution} wallColor={wallColor} isLive={isLive} isTransitioning={isTransitioning} />}
                         </div>
                         {blendConn && (
                             <div style={{
@@ -595,7 +595,7 @@
                                 inset: 0, 
                                 mixBlendMode: node.data.blendMode || 'normal'
                             }}>
-                                 <RenderNode nodeId={blendConn.from} nodes={nodes} connections={connections} resolution={resolution} wallColor={wallColor} />
+                                 <RenderNode nodeId={blendConn.from} nodes={nodes} connections={connections} resolution={resolution} wallColor={wallColor} isLive={isLive} isTransitioning={isTransitioning} />
                             </div>
                         )}
                     </div>
@@ -605,24 +605,84 @@
             return null;
         };
 
-        const ProjectedContent = ({ cueState, walls }) => {
-            if(!cueState || !walls) return null;
+        const getInterpolatedNode = (prevNode, currNode, mix) => {
+            const newData = { ...currNode.data };
+            const keys = ['scale', 'alignX', 'alignY', 'rotate', 'opacity', 'distortion', 'detail', 'time', 'animSpeed'];
+            keys.forEach(key => {
+                let def = 0;
+                if (key === 'scale') def = 1;
+                if (key === 'alignX' || key === 'alignY') def = 50;
+                if (key === 'detail') def = 4;
+                if (key === 'animSpeed') def = 0.1;
+                const v1 = prevNode.data[key] ?? def;
+                const v2 = currNode.data[key] ?? def;
+                if (typeof v1 === 'number' && typeof v2 === 'number') {
+                    newData[key] = v1 + (v2 - v1) * mix;
+                }
+            });
+            return { ...currNode, data: newData };
+        };
+
+        const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, walls, isLive }) => {
+            const getRootNodeId = (state, wallId) => {
+                if (!state || !state.nodes) return null;
+                const out = state.nodes.find(n => n.type === 'output' && n.data.wallId === wallId);
+                if (!out) return null;
+                const conn = state.connections?.find(c => c.to === out.id);
+                return conn ? conn.from : null;
+            };
+
+            const isTransitioning = mix < 1 && !!prevCueState;
+
             return (
                 <div className="absolute inset-0 overflow-hidden pointer-events-none">
                     {walls.map(wall => {
-                        const outputNode = cueState.nodes?.find(n => n.type === 'output' && n.data.wallId === wall.id);
-                        if (!outputNode) return null;
-                        const inputConn = cueState.connections?.find(c => c.to === outputNode.id);
-                        if (!inputConn) return null;
-
+                        const prevRootId = getRootNodeId(prevCueState, wall.id);
+                        const currRootId = getRootNodeId(currentCueState, wall.id);
+                        
                         const p = wall.points;
                         const width = Math.max(getDistance(p[0], p[1]), getDistance(p[2], p[3]));
                         const height = Math.max(getDistance(p[1], p[2]), getDistance(p[3], p[0]));
-
                         const cssM = getCssMatrix(wall.points, width, height);
+
+                        const isSameNode = prevRootId && currRootId && prevRootId === currRootId;
+                        
+                        let currentNodeToRender = null;
+                        if (currRootId) {
+                            let nodesToUse = currentCueState.nodes;
+                            if (isTransitioning && isSameNode) {
+                                nodesToUse = currentCueState.nodes.map(n => {
+                                    const prev = prevCueState.nodes?.find(pn => pn.id === n.id);
+                                    return prev ? getInterpolatedNode(prev, n, mix) : n;
+                                });
+                            }
+                            currentNodeToRender = (
+                                <RenderNode 
+                                    nodeId={currRootId} 
+                                    nodes={nodesToUse} 
+                                    connections={currentCueState.connections} 
+                                    resolution={height} 
+                                    wallColor={wall.color} 
+                                    isLive={isLive} 
+                                    isTransitioning={isTransitioning} 
+                                />
+                            );
+                        }
+
+                        const currentLayerOpacity = (isTransitioning && !isSameNode) ? mix : 1;
+
                         return (
                             <div key={wall.id} className="absolute left-0 top-0 origin-top-left will-change-transform" style={{ width: `${width}px`, height: `${height}px`, transform: cssM, overflow: 'hidden' }}>
-                                <RenderNode nodeId={inputConn.from} nodes={cueState.nodes} connections={cueState.connections} resolution={height} wallColor={wall.color} />
+                                {isTransitioning && !isSameNode && prevRootId && (
+                                    <div key={prevRootId} style={{ opacity: 1 - mix, position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
+                                                <RenderNode nodeId={prevRootId} nodes={prevCueState.nodes} connections={prevCueState.connections} resolution={height} wallColor={wall.color} isLive={isLive} isTransitioning={isTransitioning} />
+                                    </div>
+                                )}
+                                {currentNodeToRender && (
+                                    <div key={currRootId} style={{ opacity: currentLayerOpacity, position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
+                                        {currentNodeToRender}
+                                    </div>
+                                )}
                             </div>
                         );
                     })}
@@ -1287,6 +1347,19 @@
                 const handleFsChange = () => setIsFullscreen(!!document.fullscreenElement);
                 document.addEventListener('fullscreenchange', handleFsChange);
                 return () => document.removeEventListener('fullscreenchange', handleFsChange);
+                const attemptFullscreen = async () => {
+                    try {
+                        if (!document.fullscreenElement) {
+                            await document.documentElement.requestFullscreen();
+                        }
+                    } catch (e) {
+                        console.log("Auto-fullscreen blocked:", e);
+                    }
+                };
+                attemptFullscreen();
+                const handleClick = () => { attemptFullscreen(); window.removeEventListener('click', handleClick); };
+                window.addEventListener('click', handleClick);
+                return () => window.removeEventListener('click', handleClick);
             }, []);
 
             const enterFullscreen = () => { document.documentElement.requestFullscreen().catch(e => console.log(e)); };
@@ -1331,8 +1404,44 @@
             };
 
             useEffect(() => {
-                if (currentCueObj) { setPrevCueState(currentCueState); setCurrentCueState(currentCueObj); startTimeRef.current = null; cancelAnimationFrame(requestRef.current); requestRef.current = requestAnimationFrame(animateTransition); }
-                return () => cancelAnimationFrame(requestRef.current);
+                let isMounted = true;
+                if (currentCueObj) {
+                    // Snapshot current state if mid-transition to prevent flickering
+                    const startState = (prevCueState && transitionMix < 1) 
+                        ? { 
+                            ...currentCueState, 
+                            nodes: currentCueState.nodes.map(n => {
+                                const prev = prevCueState.nodes?.find(pn => pn.id === n.id);
+                                return prev ? getInterpolatedNode(prev, n, transitionMix) : n;
+                            })
+                          }
+                        : (currentCueState || prevCueState);
+
+                    const prepareTransition = async () => {
+                        // Preload videos
+                        const videos = currentCueObj.nodes?.filter(n => n.type === 'video' && n.data?.value) || [];
+                        if (videos.length > 0) {
+                            await Promise.all(videos.map(n => new Promise(resolve => {
+                                const v = document.createElement('video');
+                                v.src = n.data.value;
+                                v.preload = 'auto';
+                                v.onloadeddata = () => resolve();
+                                v.onerror = () => resolve();
+                                setTimeout(resolve, 1000);
+                            })));
+                        }
+                        
+                        if (isMounted) {
+                            setPrevCueState(startState);
+                            setCurrentCueState(currentCueObj);
+                            startTimeRef.current = null;
+                            cancelAnimationFrame(requestRef.current);
+                            requestRef.current = requestAnimationFrame(animateTransition);
+                        }
+                    };
+                    prepareTransition();
+                }
+                return () => { isMounted = false; cancelAnimationFrame(requestRef.current); };
             }, [targetCueId, activeSelection.sceneId]); 
 
             useEffect(() => { if (activeSelection.type === 'cue') setCurrentCueState(currentCueObj); }, [scenes]); 
@@ -1426,25 +1535,12 @@
                 <div className="w-full h-full relative font-sans text-white bg-zinc-950 flex flex-col">
                     {!isFullscreen && (
                         <div className="absolute inset-0 z-[100] bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center text-center p-8">
-                            <div className="max-w-md space-y-6">
-                                <h1 className="text-4xl font-bold text-white mb-2">Theater Projection Tool v23.1</h1>
-                                <div className="p-4 bg-red-900/30 border border-red-600/50 rounded-lg text-red-200 text-sm flex items-start gap-3 text-left">
-                                    <AlertTriangle size={24} className="shrink-0 mt-0.5" />
-                                    <div>
-                                        <p className="font-bold mb-1">Browser Compatibility</p>
-                                        <p>This tool uses advanced 3D rendering which may not work well in Safari. Chrome or Firefox is recommended.</p>
-                                    </div>
-                                </div>
-                                <div className="p-4 bg-yellow-900/30 border border-yellow-600/50 rounded-lg text-yellow-200 text-sm flex items-start gap-3 text-left">
-                                    <AlertTriangle size={24} className="shrink-0 mt-0.5" />
-                                    <div>
-                                        <p className="font-bold mb-1">Optimization Notice</p>
-                                        <p>The software has been optimized for the Dvorak layout. QWERTY layout will be coming later.</p>
-                                    </div>
-                                </div>
-                                <p className="text-gray-300">This application works best in full screen mode.</p>
-                                <button onClick={enterFullscreen} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-lg font-bold text-lg transition-transform hover:scale-105 flex items-center justify-center gap-2 mx-auto">
-                                    <Maximize size={20} /> Enter Full Screen
+                            <div className="max-w-4xl space-y-8">
+                                <img src="robotic T M.png" className="w-[600px] mx-auto mb-8" alt="Logo" />
+                                <h1 className="text-5xl font-bold text-white mb-4">Emap</h1>
+                                <p className="text-gray-300 text-xl">This application works best in full screen mode.</p>
+                                <button onClick={enterFullscreen} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-xl font-bold text-2xl transition-transform hover:scale-105 flex items-center justify-center gap-3 mx-auto">
+                                    <Maximize size={28} /> Start
                                 </button>
                             </div>
                         </div>
@@ -1464,12 +1560,7 @@
                         {viewMode === '2d' && (
                             <div className="absolute inset-0 z-10" onClick={() => setActiveWallId(null)}>
                             {(showTexture || viewMode === 'live' || menuTab === 'scenes') && (
-                                <>
-                                    {prevCueState && transitionMix < 1 && (
-                                        <div className="absolute inset-0 pointer-events-none" style={{ opacity: 1 - transitionMix }}><ProjectedContent cueState={prevCueState} walls={walls} /></div>
-                                    )}
-                                    <div className="absolute inset-0 pointer-events-none" style={{ opacity: transitionMix }}><ProjectedContent cueState={currentCueState} walls={walls} /></div>
-                                </>
+                                <TransitioningProjectedContent prevCueState={prevCueState} currentCueState={currentCueState} mix={transitionMix} walls={walls} isLive={viewMode === 'live'} />
                             )}
                                 {renderSVG(false)}
                                 <div className="absolute top-4 left-4 pointer-events-none select-none drop-shadow-md z-50">
@@ -1492,12 +1583,7 @@
                         )}
                         {viewMode === 'live' && (
                             <div className="absolute inset-0 z-50 cursor-none bg-black">
-                            {prevCueState && transitionMix < 1 && (
-                                <div className="absolute inset-0 pointer-events-none" style={{ opacity: 1 - transitionMix }}><ProjectedContent cueState={prevCueState} walls={walls} /></div>
-                            )}
-                            <div className="absolute inset-0 pointer-events-none" style={{ opacity: transitionMix }}>
-                                <ProjectedContent cueState={currentCueState} walls={walls} />
-                            </div>
+                                <TransitioningProjectedContent prevCueState={prevCueState} currentCueState={currentCueState} mix={transitionMix} walls={walls} isLive={true} />
                                 {renderSVG(true)}
                             </div>
                         )}
