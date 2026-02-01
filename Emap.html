@@ -1220,7 +1220,7 @@
             }
 
             return (
-                <div className="w-full h-full bg-zinc-900/90 p-6 flex gap-8 text-gray-300">
+                <div className="w-full h-full bg-transparent p-6 flex gap-8 text-gray-300">
                     <div className="w-64 flex flex-col gap-6 pt-2">
                         <div><h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2"><Link size={16}/> TRANSITION SETTINGS</h3>
                             <div className="space-y-4">
@@ -1461,6 +1461,40 @@
                 return () => window.removeEventListener('keydown', handleKeyDown);
             }, [viewMode, menuTab, activeState, scenes, activeSelection]);
 
+            const moveScene = (index, direction) => {
+                setScenes(prev => {
+                    const newScenes = [...prev];
+                    if (index + direction < 0 || index + direction >= newScenes.length) return prev;
+                    [newScenes[index], newScenes[index + direction]] = [newScenes[index + direction], newScenes[index]];
+                    return newScenes;
+                });
+            };
+
+            const moveCue = (sceneId, cueIndex, direction) => {
+                setScenes(prev => prev.map(s => {
+                    if (s.id !== sceneId) return s;
+                    const newCues = [...s.cues];
+                    if (cueIndex + direction < 0 || cueIndex + direction >= newCues.length) return s;
+                    [newCues[cueIndex], newCues[cueIndex + direction]] = [newCues[cueIndex + direction], newCues[cueIndex]];
+                    return { ...s, cues: newCues };
+                }));
+            };
+
+            const deleteScene = (sceneId) => {
+                if (confirm("Delete this Act and all its cues?")) {
+                    setScenes(prev => prev.filter(s => s.id !== sceneId));
+                }
+            };
+
+            const deleteCue = (sceneId, cueId) => {
+                if (confirm("Delete this cue?")) {
+                    setScenes(prev => prev.map(s => {
+                        if (s.id !== sceneId) return s;
+                        return { ...s, cues: s.cues.filter(c => c.id !== cueId) };
+                    }));
+                }
+            };
+
             const navigateCue = (direction) => {
                 let flatList = [];
                 scenes.forEach(s => { s.cues.forEach(c => { flatList.push({ sceneId: s.id, cueId: c.id }); }); });
@@ -1589,9 +1623,9 @@
                         )}
                     </div>
 
-                    {menuTab === 'scenes' && viewMode !== 'live' && (
+                    {menuTab === 'scenes' && viewMode !== 'live' && showNodeEditor && (
                         <div className="absolute bottom-0 left-0 right-0 h-[45%] z-30 border-t border-zinc-700/30 bg-zinc-900/50 backdrop-blur-md">
-                            {activeSelection.type === 'cue' && showNodeEditor && (
+                            {activeSelection.type === 'cue' && (
                                 <NodeEditor activeSelection={activeSelection} currentCue={currentCueObj} updateCueData={updateCueData} walls={walls} setWalls={setWalls} />
                             )}
                             {activeSelection.type === 'transition' && (
@@ -1661,7 +1695,12 @@
                                                 <div key={scene.id} className="mb-3">
                                                     <div className="px-2 py-1 text-xs font-bold text-gray-500 uppercase border-b border-zinc-800 mb-1 flex justify-between items-center">
                                                         <span className="flex items-center gap-2"><Film size={10}/> {scene.name}</span>
-                                                        <button onClick={() => addCue(scene.id)} className="text-[9px] bg-zinc-800 hover:bg-zinc-700 px-1.5 py-0.5 rounded text-gray-300">+ Cue</button>
+                                                        <div className="flex items-center gap-1">
+                                                            <button onClick={() => moveScene(sIdx, -1)} className="text-gray-500 hover:text-white p-0.5"><ChevronUp size={12}/></button>
+                                                            <button onClick={() => moveScene(sIdx, 1)} className="text-gray-500 hover:text-white p-0.5"><ChevronDown size={12}/></button>
+                                                            <button onClick={() => deleteScene(scene.id)} className="text-gray-500 hover:text-red-400 p-0.5" title="Delete Act"><Trash2 size={12}/></button>
+                                                            <button onClick={() => addCue(scene.id)} className="text-[9px] bg-zinc-800 hover:bg-zinc-700 px-1.5 py-0.5 rounded text-gray-300 ml-1">+ Cue</button>
+                                                        </div>
                                                     </div>
                                                     <div className="space-y-0 pl-1">
                                                         {scene.cues.map((cue, cIdx) => {
@@ -1669,9 +1708,14 @@
                                                             const nextCue = scene.cues[cIdx + 1] || (scenes[sIdx+1]?.cues[0]);
                                                             return (
                                                                 <div key={cue.id}>
-                                                                    <div onClick={() => setActiveSelection({ type: 'cue', sceneId: scene.id, cueId: cue.id })} className={`flex items-center gap-2 p-2 rounded text-xs cursor-pointer transition-all ${isActive ? 'bg-purple-900/50 border-l-2 border-purple-400 text-white' : 'hover:bg-zinc-800 text-gray-400 border-l-2 border-transparent'}`}>
+                                                                    <div onClick={() => setActiveSelection({ type: 'cue', sceneId: scene.id, cueId: cue.id })} className={`flex items-center gap-2 p-2 rounded text-xs cursor-pointer transition-all group ${isActive ? 'bg-purple-900/50 border-l-2 border-purple-400 text-white' : 'hover:bg-zinc-800 text-gray-400 border-l-2 border-transparent'}`}>
                                                                         {isActive ? <Play size={10} fill="currentColor"/> : <span className="w-2.5"/>}
-                                                                        <span className="truncate">{cue.name}</span>
+                                                                        <span className="truncate flex-1">{cue.name}</span>
+                                                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                            <button onClick={(e) => { e.stopPropagation(); moveCue(scene.id, cIdx, -1); }} className="text-gray-500 hover:text-white p-0.5"><ChevronUp size={10}/></button>
+                                                                            <button onClick={(e) => { e.stopPropagation(); moveCue(scene.id, cIdx, 1); }} className="text-gray-500 hover:text-white p-0.5"><ChevronDown size={10}/></button>
+                                                                            <button onClick={(e) => { e.stopPropagation(); deleteCue(scene.id, cue.id); }} className="text-gray-500 hover:text-red-400 p-0.5" title="Delete Cue"><Trash2 size={10}/></button>
+                                                                        </div>
                                                                     </div>
                                                                     {nextCue && (
                                                                         <div className={`h-2 my-0.5 rounded-full mx-2 cursor-pointer hover:bg-purple-500/50 transition-colors group relative flex justify-center items-center ${activeSelection.type === 'transition' && activeSelection.nextCueId === nextCue.id ? 'bg-purple-500' : 'bg-zinc-800'}`} onClick={() => setActiveSelection({ type: 'transition', sceneId: scene.id, prevCueId: cue.id, nextCueId: nextCue.id })}>
