@@ -5,6 +5,7 @@ use std::sync::Mutex;
 use std::fs;
 use std::path::{Path, PathBuf};
 use display_info::DisplayInfo;
+use uuid::Uuid;
 
 #[get("/")]
 async fn index() -> impl Responder {
@@ -72,7 +73,9 @@ async fn logo() -> impl Responder {
 // --- Database & API ---
 
 struct AppState {
-    db: Mutex<Connection>,
+    global_db: Mutex<Connection>,
+    project_db: Mutex<Option<Connection>>,
+    active_project_id: Mutex<Option<String>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -80,6 +83,13 @@ struct AssetMeta {
     id: String,
     name: String,
     mime_type: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ProjectMeta {
+    id: String,
+    name: String,
+    created_at: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -113,7 +123,7 @@ async fn get_monitors() -> impl Responder {
 
 #[post("/api/config/monitor")]
 async fn save_monitor_config(data: web::Data<AppState>, config: web::Json<AppConfig>) -> impl Responder {
-    let conn = data.db.lock().unwrap();
+    let conn = data.global_db.lock().unwrap();
     let config_str = serde_json::to_string(&*config).unwrap();
     conn.execute(
         "INSERT OR REPLACE INTO system_data (key, value) VALUES (?1, ?2)",
@@ -122,9 +132,102 @@ async fn save_monitor_config(data: web::Data<AppState>, config: web::Json<AppCon
     HttpResponse::Ok().finish()
 }
 
+// --- Project Management API ---
+
+#[get("/api/projects")]
+async fn list_projects(data: web::Data<AppState>) -> impl Responder {
+    let conn = data.global_db.lock().unwrap();
+    let mut stmt = conn.prepare("SELECT id, name, created_at FROM projects ORDER BY created_at DESC").unwrap();
+    let projects_iter = stmt.query_map([], |row| {
+        Ok(ProjectMeta {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            created_at: row.get(2)?,
+        })
+    }).unwrap();
+    let projects: Vec<ProjectMeta> = projects_iter.map(|x| x.unwrap()).collect();
+    HttpResponse::Ok().json(projects)
+}
+
+#[derive(Deserialize)]
+struct CreateProjectReq {
+    name: String,
+}
+
+#[post("/api/projects")]
+async fn create_project(data: web::Data<AppState>, req: web::Json<CreateProjectReq>) -> impl Responder {
+    let id = Uuid::new_v4().to_string();
+    let created_at = chrono::Local::now().to_rfc3339();
+    
+    // 1. Add to Global DB
+    {
+        let conn = data.global_db.lock().unwrap();
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at) VALUES (?1, ?2, ?3)",
+            params![id, req.name, created_at],
+        ).unwrap();
+    }
+
+    // 2. Initialize Project DB
+    let _ = init_project_db(&id);
+
+    // 3. Load it immediately
+    load_project_internal(&data, &id);
+
+    HttpResponse::Ok().json(ProjectMeta { id, name: req.name.clone(), created_at })
+}
+
+#[delete("/api/projects/{id}")]
+async fn delete_project(data: web::Data<AppState>, id: web::Path<String>) -> impl Responder {
+    let project_id = id.into_inner();
+    
+    // 1. Remove from Global DB
+    let conn = data.global_db.lock().unwrap();
+    conn.execute("DELETE FROM projects WHERE id = ?1", params![&project_id]).unwrap();
+
+    // 2. Delete Project DB File
+    let path = PathBuf::from("projects").join(format!("{}.db", project_id));
+    if path.exists() {
+        let _ = fs::remove_file(path);
+    }
+
+    HttpResponse::Ok().finish()
+}
+
+#[post("/api/projects/{id}/load")]
+async fn load_project(data: web::Data<AppState>, id: web::Path<String>) -> impl Responder {
+    if load_project_internal(&data, &id) {
+        HttpResponse::Ok().body("Loaded")
+    } else {
+        HttpResponse::NotFound().body("Project not found")
+    }
+}
+
+#[get("/api/project/active")]
+async fn get_active_project(data: web::Data<AppState>) -> impl Responder {
+    let id_guard = data.active_project_id.lock().unwrap();
+    match &*id_guard {
+        Some(id) => {
+            let conn = data.global_db.lock().unwrap();
+            let name: String = conn.query_row("SELECT name FROM projects WHERE id = ?1", params![id], |r| r.get(0)).unwrap_or("Unknown".to_string());
+            HttpResponse::Ok().json(serde_json::json!({ "id": id, "name": name }))
+        },
+        None => HttpResponse::NotFound().finish()
+    }
+}
+
+// --- KV Store (Project Specific) ---
+
 #[get("/api/kv/{key}")]
 async fn get_kv(data: web::Data<AppState>, key: web::Path<String>) -> impl Responder {
-    let conn = data.db.lock().unwrap();
+    let db_guard = data.project_db.lock().unwrap();
+    
+    // If no project loaded, return 404 or empty
+    let conn = match &*db_guard {
+        Some(c) => c,
+        None => return HttpResponse::NotFound().body("No active project"),
+    };
+
     let res: Result<String, _> = conn.query_row(
         "SELECT value FROM kv_store WHERE key = ?1",
         params![key.as_str()],
@@ -139,7 +242,12 @@ async fn get_kv(data: web::Data<AppState>, key: web::Path<String>) -> impl Respo
 
 #[post("/api/kv/{key}")]
 async fn save_kv(data: web::Data<AppState>, key: web::Path<String>, body: String) -> impl Responder {
-    let conn = data.db.lock().unwrap();
+    let db_guard = data.project_db.lock().unwrap();
+    let conn = match &*db_guard {
+        Some(c) => c,
+        None => return HttpResponse::BadRequest().body("No active project"),
+    };
+
     conn.execute(
         "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?1, ?2)",
         params![key.as_str(), body],
@@ -147,9 +255,16 @@ async fn save_kv(data: web::Data<AppState>, key: web::Path<String>, body: String
     HttpResponse::Ok().finish()
 }
 
+// --- Assets (Project Specific Metadata) ---
+
 #[get("/api/assets")]
 async fn list_assets(data: web::Data<AppState>) -> impl Responder {
-    let conn = data.db.lock().unwrap();
+    let db_guard = data.project_db.lock().unwrap();
+    let conn = match &*db_guard {
+        Some(c) => c,
+        None => return HttpResponse::Ok().json(Vec::<AssetMeta>::new()),
+    };
+
     let mut stmt = conn.prepare("SELECT id, name, mime_type FROM assets").unwrap();
     let assets_iter = stmt.query_map([], |row| {
         Ok(AssetMeta {
@@ -271,13 +386,18 @@ async fn import_asset(data: web::Data<AppState>, req: web::Json<ImportRequest>) 
 
     // Add to DB
     let mime_type = mime_guess::from_path(&dest).first_or_octet_stream().to_string();
-    let conn = data.db.lock().unwrap();
+    
+    let db_guard = data.project_db.lock().unwrap();
+    let conn = match &*db_guard {
+        Some(c) => c,
+        None => return HttpResponse::BadRequest().body("No active project"),
+    };
     conn.execute(
         "INSERT OR REPLACE INTO assets (id, name, mime_type) VALUES (?1, ?2, ?3)",
         params![name, name, mime_type],
     ).unwrap();
 
-    HttpResponse::Ok().body("Imported")
+    HttpResponse::Ok().json(serde_json::json!({ "status": "imported", "id": name }))
 }
 
 fn format_size(bytes: u64) -> String {
@@ -310,7 +430,12 @@ async fn save_asset(
 
     // Add to DB
     let mime_type = mime_guess::from_path(&file_path).first_or_octet_stream().to_string();
-    let conn = data.db.lock().unwrap();
+    
+    let db_guard = data.project_db.lock().unwrap();
+    let conn = match &*db_guard {
+        Some(c) => c,
+        None => return HttpResponse::BadRequest().body("No active project"),
+    };
     conn.execute(
         "INSERT OR REPLACE INTO assets (id, name, mime_type) VALUES (?1, ?2, ?3)",
         params![safe_filename, safe_filename, mime_type],
@@ -341,26 +466,70 @@ async fn get_asset(id: web::Path<String>) -> impl Responder {
 async fn delete_asset(data: web::Data<AppState>, id: web::Path<String>) -> impl Responder {
     let filename = id.into_inner();
     // Only delete from DB, keep file in assets folder
-    let conn = data.db.lock().unwrap();
+    let db_guard = data.project_db.lock().unwrap();
+    let conn = match &*db_guard {
+        Some(c) => c,
+        None => return HttpResponse::BadRequest().body("No active project"),
+    };
     conn.execute("DELETE FROM assets WHERE id = ?1", params![filename]).unwrap();
 
     HttpResponse::Ok().finish()
+}
+
+// --- Helpers ---
+
+fn init_project_db(id: &str) -> Result<Connection, rusqlite::Error> {
+    let path = PathBuf::from("projects").join(format!("{}.db", id));
+    let conn = Connection::open(path)?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS assets (id TEXT PRIMARY KEY, name TEXT, mime_type TEXT)",
+        [],
+    )?;
+    Ok(conn)
+}
+
+fn load_project_internal(data: &AppState, id: &str) -> bool {
+    if let Ok(conn) = init_project_db(id) {
+        let mut db_guard = data.project_db.lock().unwrap();
+        *db_guard = Some(conn);
+        
+        let mut id_guard = data.active_project_id.lock().unwrap();
+        *id_guard = Some(id.to_string());
+
+        // Update last opened in global DB
+        let global = data.global_db.lock().unwrap();
+        let _ = global.execute("INSERT OR REPLACE INTO system_data (key, value) VALUES ('last_project_id', ?1)", params![id]);
+        
+        true
+    } else {
+        false
+    }
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // Create assets directory
     fs::create_dir_all("assets")?;
+    fs::create_dir_all("projects")?;
 
-    // Initialize Database
+    // Initialize Global Database
     let conn = Connection::open("emap.db").expect("Failed to open database");
+    
+    // Projects Table
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS kv_store (
-            key TEXT PRIMARY KEY,
-            value TEXT
+        "CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            created_at TEXT
         )",
         [],
-    ).expect("Failed to create kv_store table");
+    ).expect("Failed to create projects table");
+
+    // System Data (Global Config)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS system_data (
             key TEXT PRIMARY KEY,
@@ -368,18 +537,28 @@ async fn main() -> std::io::Result<()> {
         )",
         [],
     ).expect("Failed to create system_data table");
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS assets (
-            id TEXT PRIMARY KEY,
-            name TEXT,
-            mime_type TEXT
-        )",
-        [],
-    ).expect("Failed to create assets table");
 
     let app_state = web::Data::new(AppState {
-        db: Mutex::new(conn),
+        global_db: Mutex::new(conn),
+        project_db: Mutex::new(None),
+        active_project_id: Mutex::new(None),
     });
+
+    // Try load last project
+    {
+        let global = app_state.global_db.lock().unwrap();
+        let last_id: Result<String, _> = global.query_row(
+            "SELECT value FROM system_data WHERE key = 'last_project_id'", 
+            [], 
+            |r| r.get(0)
+        );
+        drop(global); // unlock before calling load_project_internal
+
+        if let Ok(id) = last_id {
+            println!("Loading last project: {}", id);
+            load_project_internal(&app_state, &id);
+        }
+    }
 
     println!("Starting server on http://127.0.0.1:8080");
     println!("Open http://127.0.0.1:8080 in your browser.");
@@ -399,6 +578,11 @@ async fn main() -> std::io::Result<()> {
             .service(logo)
             .service(get_monitors)
             .service(save_monitor_config)
+            .service(list_projects)
+            .service(delete_project)
+            .service(create_project)
+            .service(load_project)
+            .service(get_active_project)
             .service(get_kv)
             .service(save_kv)
             .service(list_assets)
