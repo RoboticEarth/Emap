@@ -1,3 +1,15 @@
+# Rust build artifacts
 /target
+
+# Databases
+*.db
+projects/*.db
+
+# Node dependencies
+node_modules/
+ui/node_modules/
+
+# System and temporary files
+.DS_Store
+*.log
 **/*.rs.bk
-Cargo.lock
