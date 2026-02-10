@@ -19,6 +19,14 @@ else
     SUDO=""
 fi
 
+# 0.1 FreeBSD Partition Resize (if applicable)
+if [[ "$OSTYPE" == "freebsd"* ]]; then
+    echo "[0.1] Attempting to expand FreeBSD partition to fill disk..."
+    $SUDO gpart recover vtbd0 2>/dev/null
+    $SUDO gpart resize -i 2 vtbd0 2>/dev/null
+    $SUDO growfs -y / 2>/dev/null
+fi
+
 # 1. Identify Operating System and Package Manager
 if [ -f /etc/debian_version ]; then
     PM="apt"
@@ -76,7 +84,16 @@ case $PM in
         $SUDO pkg install -y pkgconf openssl qt5-buildtools qt5-qmake \
             qt5-widgets qt5-webengine rust automount x11-wm/cage \
             gstreamer1-plugins-good gstreamer1-libav node \
-            alsa-utils
+            alsa-utils seatd drm-kmod
+        
+        echo "Configuring FreeBSD Wayland permissions..."
+        $SUDO sysrc seatd_enable="YES"
+        $SUDO service seatd start
+        $SUDO kldload -n virtio_gpu.ko
+        # Ensure driver loads on boot
+        if ! grep -q "virtio_gpu" /boot/loader.conf; then
+            echo 'virtio_gpu_load="YES"' | $SUDO tee -a /boot/loader.conf
+        fi
         ;;
 esac
 
@@ -122,6 +139,8 @@ fi
 
 export QT_QPA_PLATFORM=wayland
 export QT_VIDEO_HOLEPUNCH=1
+# Force software rendering if GPU fails (common in VMs)
+export WLR_RENDERER_ALLOW_SOFTWARE=1
 export XDG_RUNTIME_DIR=/run/user/\$(id -u)
 
 # Ensure runtime dir exists for Wayland

@@ -26,3 +26,5 @@ ui/dist/
 .env
 local_config.json
 # start_emap.sh # Uncomment if you want to keep the launch script local-only/vm_testing/
+vm_testing/freebsd.qcow2
+vm_testing/run_vm.sh
