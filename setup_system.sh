@@ -84,7 +84,8 @@ case $PM in
         $SUDO pkg install -y pkgconf openssl qt5-buildtools qt5-qmake \
             qt5-widgets qt5-webengine rust automount x11-wm/cage \
             gstreamer1-plugins-good gstreamer1-libav node \
-            alsa-utils seatd drm-kmod
+            alsa-utils seatd drm-kmod libGL libXcomposite libXrender \
+            mesa-libs
         
         echo "Configuring FreeBSD Wayland permissions..."
         $SUDO sysrc seatd_enable="YES"
