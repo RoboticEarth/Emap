@@ -25,4 +25,4 @@ ui/dist/
 # Environment and local scripts
 .env
 local_config.json
-# start_emap.sh # Uncomment if you want to keep the launch script local-only
+# start_emap.sh # Uncomment if you want to keep the launch script local-only/vm_testing/
