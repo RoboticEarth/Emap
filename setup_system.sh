@@ -72,8 +72,9 @@ case $PM in
         ;;
     pkg)
         $SUDO pkg update
+        # Use full category names for clarity on FreeBSD
         $SUDO pkg install -y pkgconf openssl qt5-buildtools qt5-qmake \
-            qt5-widgets qt5-webengine rust automount cage \
+            qt5-widgets qt5-webengine rust automount x11-wm/cage \
             gstreamer1-plugins-good gstreamer1-libav node \
             alsa-utils
         ;;
