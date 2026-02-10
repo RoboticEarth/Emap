@@ -83,6 +83,8 @@ canvas {
 }
 
 @keyframes shimmer { 
+  @keyframes bounce-subtle { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+  .animate-bounce-subtle { animation: bounce-subtle 2s infinite ease-in-out; }
     0% { transform: translateX(-200%); } 
     100% { transform: translateX(400%); } 
 }

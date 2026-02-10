@@ -18,6 +18,40 @@ const {
 
 // --- SHARED UI COMPONENTS ---
 
+const ConflictModal = ({ isOpen, fileName, onKeepOld, onKeepNew, applyToAll, setApplyToAll }) => {
+    if (!isOpen) return null;
+    return createPortal(
+        <div className="fixed inset-0 z-[30000] flex items-center justify-center bg-black/70 backdrop-blur-md">
+            <div className="bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl p-6 w-[400px] flex flex-col gap-4 animate-scale">
+                <div className="flex items-center gap-3 text-orange-400">
+                    <AlertTriangle size={24} />
+                    <h3 className="text-lg font-bold text-white uppercase">File Conflict</h3>
+                </div>
+                <p className="text-sm text-gray-300">
+                    The file <span className="text-white font-bold">"{fileName}"</span> already exists in the library.
+                </p>
+                
+                <div className="bg-zinc-800 p-3 rounded border border-zinc-700 space-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer group">
+                        <input type="checkbox" checked={applyToAll} onChange={e => setApplyToAll(e.target.checked)} className="form-checkbox h-4 w-4 text-blue-600 bg-zinc-700 border-zinc-600 rounded" />
+                        <span className="text-xs font-bold text-gray-400 group-hover:text-gray-200">Apply choice to all remaining conflicts</span>
+                    </label>
+                </div>
+
+                <div className="flex flex-col gap-2 mt-2">
+                    <button onClick={onKeepNew} className="w-full py-3 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-lg transition-all">
+                        OVERWRITE (KEEP NEW)
+                    </button>
+                    <button onClick={onKeepOld} className="w-full py-3 rounded bg-zinc-800 hover:bg-zinc-700 text-gray-300 text-xs font-bold border border-zinc-700 transition-all">
+                        SKIP (KEEP OLD)
+                    </button>
+                </div>
+            </div>
+        </div>,
+        document.body
+    );
+};
+
 const HandleCircle = ({ type, title, top, active, onClick }) => {
     let colorClasses = '';
     if (type === 'output') {
@@ -93,12 +127,27 @@ const WarpedTextureGrid = ({ wallPoints }) => {
 const FileExplorer = ({ isOpen, onClose, onImport }) => {
     const [currentPath, setCurrentPath] = useState('');
     const [items, setItems] = useState([]);
-    const [selectedPath, setSelectedPath] = useState(null);
+    const [selectedPaths, setSelectedPaths] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [drives, setDrives] = useState([]);
+    const [activeTab, setActiveTab] = useState('server'); // 'server' or drive path
+    
+    // Conflict state
+    const [conflict, setConflict] = useState(null); // { path, name }
+    const [applyToAll, setApplyToAll] = useState(false);
+    const [bulkDecision, setBulkDecision] = useState(null); // 'overwrite' or 'skip'
 
     useEffect(() => {
-        if (isOpen) loadPath('');
+        if (isOpen) {
+            loadDrives();
+            loadPath('');
+        }
     }, [isOpen]);
+
+    const loadDrives = async () => {
+        const d = await db.getDrives();
+        setDrives(d);
+    };
 
     const loadPath = async (path) => {
         setLoading(true);
@@ -106,46 +155,168 @@ const FileExplorer = ({ isOpen, onClose, onImport }) => {
             const data = await db.listServerFiles(path);
             setCurrentPath(data.path);
             setItems(data.items || []);
-            setSelectedPath(null);
+            setSelectedPaths([]);
         } catch (e) {
             console.error(e);
         }
         setLoading(false);
     };
 
-    const handleImport = () => {
-        if (selectedPath) {
-            onImport(selectedPath);
-            onClose();
+    const toggleSelect = (path) => {
+        setSelectedPaths(prev => 
+            prev.includes(path) ? prev.filter(p => p !== path) : [...prev, path]
+        );
+    };
+
+    const selectAll = () => {
+        const allFiles = items.filter(i => i.type === 'file').map(i => i.path);
+        setSelectedPaths(allFiles);
+    };
+
+    const handleImportProcess = async () => {
+        setLoading(true);
+        let currentBulkDecision = null;
+
+        for (const path of selectedPaths) {
+            const fileName = path.split('/').pop() || path.split('\\').pop();
+            
+            if (currentBulkDecision) {
+                if (currentBulkDecision === 'overwrite') {
+                    await db.importAssetFromPath(path, true);
+                }
+                continue;
+            }
+
+            const result = await db.importAssetFromPath(path, false);
+            
+            if (result && result.conflict) {
+                // Wait for user decision
+                const decision = await new Promise((resolve) => {
+                    setConflict({ path, name: fileName, resolve });
+                });
+                
+                setConflict(null);
+                
+                if (decision === 'overwrite') {
+                    await db.importAssetFromPath(path, true);
+                    if (applyToAll) currentBulkDecision = 'overwrite';
+                } else {
+                    if (applyToAll) currentBulkDecision = 'skip';
+                }
+            }
         }
+        
+        setLoading(false);
+        onImport();
+        onClose();
     };
 
     if (!isOpen) return null;
 
     return (
         <div className="fixed inset-0 z-[210] bg-black/80 backdrop-blur-sm flex items-center justify-center p-8">
-            <div className="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-2xl h-[70vh] flex flex-col shadow-2xl overflow-hidden">
+            <ConflictModal 
+                isOpen={!!conflict} 
+                fileName={conflict?.name} 
+                applyToAll={applyToAll}
+                setApplyToAll={setApplyToAll}
+                onKeepOld={() => conflict?.resolve('skip')}
+                onKeepNew={() => conflict?.resolve('overwrite')}
+            />
+            
+            <div className="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-3xl h-[80vh] flex flex-col shadow-2xl overflow-hidden">
                 <div className="p-4 border-b border-zinc-700 flex justify-between items-center bg-zinc-950">
                     <h2 className="text-lg font-bold text-white flex items-center gap-2"><HardDrive size={20} className="text-blue-400"/> File Explorer</h2>
-                    <button onClick={onClose} className="text-gray-400 hover:text-white"><X size={24}/></button>
+                    <div className="flex items-center gap-2">
+                        {selectedPaths.length > 0 && (
+                            <span className="text-xs font-bold text-blue-400 mr-4">{selectedPaths.length} selected</span>
+                        )}
+                        <button onClick={onClose} className="text-gray-400 hover:text-white"><X size={24}/></button>
+                    </div>
                 </div>
-                <div className="flex-1 overflow-y-auto p-2">
-                    {loading ? <div className="text-center p-4 text-gray-500 text-xs">Loading...</div> : (
-                        <div className="grid grid-cols-4 md:grid-cols-5 gap-2">
+
+                <div className="flex bg-zinc-950 border-b border-zinc-800">
+                    <button 
+                        onClick={() => { setActiveTab('server'); loadPath(''); }}
+                        className={`px-6 py-3 text-xs font-bold transition-colors ${activeTab === 'server' ? 'text-blue-400 border-b-2 border-blue-400 bg-zinc-900' : 'text-gray-500 hover:text-gray-300'}`}
+                    >
+                        SERVER ASSETS
+                    </button>
+                    {drives.map(drive => (
+                        <button 
+                            key={drive.path}
+                            onClick={() => { setActiveTab(drive.path); loadPath(drive.path); }}
+                            className={`px-6 py-3 text-xs font-bold transition-colors flex items-center gap-2 ${activeTab === drive.path ? 'text-orange-400 border-b-2 border-orange-400 bg-zinc-900' : 'text-gray-500 hover:text-gray-300'}`}
+                        >
+                            <Cable size={14} /> USB: {drive.name}
+                        </button>
+                    ))}
+                </div>
+
+                <div className="p-2 bg-zinc-900/50 flex justify-between items-center border-b border-zinc-800">
+                    <div className="text-[10px] text-gray-500 font-mono truncate px-2">{currentPath || 'Root'}</div>
+                    <div className="flex gap-2">
+                        <button onClick={selectAll} className="text-[10px] font-bold text-blue-400 hover:text-blue-300 px-2 py-1">Select All</button>
+                        <button onClick={() => setSelectedPaths([])} className="text-[10px] font-bold text-gray-500 hover:text-gray-300 px-2 py-1">Clear</button>
+                    </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-4">
+                    {loading && !conflict ? <div className="text-center p-8 flex flex-col items-center gap-4">
+                        <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                        <span className="text-gray-500 text-xs font-bold animate-pulse uppercase tracking-widest">Processing Files...</span>
+                    </div> : (
+                        <div className="grid grid-cols-4 md:grid-cols-5 gap-3">
                             {items.map((item, i) => ( 
-                                <div key={i} onClick={() => item.type === 'file' ? setSelectedPath(item.path) : loadPath(item.path)} className={`flex flex-col items-center p-2 rounded cursor-pointer transition-colors ${selectedPath === item.path ? 'bg-blue-900/30 border border-blue-500/50' : 'hover:bg-zinc-800 border border-transparent'}`}> 
-                                    <div className="w-full aspect-square bg-black mb-2 flex items-center justify-center overflow-hidden rounded border border-zinc-800">
-                                        {item.type === 'file' ? ( <img src={`/api/asset/${encodeURIComponent(item.name)}`} className="w-full h-full object-cover" onError={(e) => {e.target.style.display='none'; e.target.nextSibling.style.display='block'}}/> ) : null}
-                                        <div style={{display: item.type === 'file' ? 'none' : 'block'}}>{item.type === 'dir' || item.type === 'drive' ? ( <Folder size={32} className={item.type === 'drive' ? "text-orange-400" : "text-yellow-400"} /> ) : ( <File size={32} className="text-gray-500" /> )}</div>
+                                <div 
+                                    key={i} 
+                                    onClick={() => item.type === 'file' ? toggleSelect(item.path) : loadPath(item.path)} 
+                                    className={`flex flex-col items-center p-2 rounded-lg cursor-pointer transition-all relative ${selectedPaths.includes(item.path) ? 'bg-blue-600/20 ring-2 ring-blue-500' : 'hover:bg-zinc-800'}`}
+                                > 
+                                    {selectedPaths.includes(item.path) && (
+                                        <div className="absolute top-1 right-1 bg-blue-500 text-white rounded-full p-0.5 z-10">
+                                            <CheckCircle size={14} />
+                                        </div>
+                                    )}
+                                    <div className="w-full aspect-square bg-black mb-2 flex items-center justify-center overflow-hidden rounded-md border border-zinc-800 shadow-inner">
+                                        {item.type === 'file' ? ( 
+                                            <img 
+                                                src={`/api/asset/${encodeURIComponent(item.name)}`} 
+                                                className="w-full h-full object-cover" 
+                                                onError={(e) => {e.target.style.display='none'; e.target.nextSibling.style.display='block'}}
+                                            /> 
+                                        ) : null}
+                                        <div style={{display: item.type === 'file' ? 'none' : 'block'}}>
+                                            {item.type === 'dir' || item.type === 'drive' ? ( 
+                                                <Folder size={40} className={item.type === 'drive' ? "text-orange-400" : "text-yellow-500 shadow-lg"} /> 
+                                            ) : ( 
+                                                <File size={40} className="text-zinc-600" /> 
+                                            )}
+                                        </div>
                                     </div>
-                                    <span className="text-xs text-gray-300 truncate w-full text-center">{item.name}</span> 
+                                    <span className="text-[10px] font-bold text-gray-300 truncate w-full text-center px-1" title={item.name}>{item.name}</span> 
                                 </div> 
                             ))}
-                            {items.length === 0 && <div className="text-center p-8 text-gray-600 text-xs">No files found</div>}
+                            {items.length === 0 && <div className="col-span-full text-center p-12 text-gray-600 text-xs font-bold uppercase tracking-widest opacity-50">Empty Directory</div>}
                         </div>
                     )}
                 </div>
-                <div className="p-4 border-t border-zinc-800 bg-zinc-900 flex justify-end gap-2"><button onClick={onClose} className="px-4 py-2 rounded text-xs font-bold text-gray-400 hover:text-white hover:bg-zinc-800">Cancel</button><button onClick={handleImport} disabled={!selectedPath} className="px-6 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed">Import Selected</button></div>
+                
+                <div className="p-4 border-t border-zinc-800 bg-zinc-950 flex justify-between items-center">
+                    <div className="text-[10px] text-gray-500 font-bold uppercase">
+                        {selectedPaths.length} items to import
+                    </div>
+                    <div className="flex gap-2">
+                        <button onClick={onClose} className="px-4 py-2 rounded text-xs font-bold text-gray-500 hover:text-white transition-colors">CANCEL</button>
+                        <button 
+                            onClick={handleImportProcess} 
+                            disabled={selectedPaths.length === 0 || loading} 
+                            className="px-8 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed shadow-lg shadow-blue-900/20 transition-all active:scale-95"
+                        >
+                            IMPORT SELECTED
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
     );
@@ -185,70 +356,17 @@ const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, initi
 
 
 
-    const handleImport = async (path) => {
-
-        console.log("[IMPORT] Starting import for:", path);
-
-        try {
-
-            const result = await db.importAssetFromPath(path);
-
-            console.log("[IMPORT] Server response received:", result);
-
-            
-
-            setShowFileExplorer(false);
-
-            console.log("[IMPORT] Reloading asset list...");
-
-            await loadAssets();
-
-            console.log("[IMPORT] Asset list reloaded.");
-
-            
-
-            if (result && result.mime_type) {
-
-                const type = result.mime_type.startsWith('video') ? 'video' : 'image';
-
-                console.log("[IMPORT] Detected type:", type);
-
-                if (type !== activeTab) {
-
-                    showAlert("Import Successful", `Asset imported, but it is not available in current ${activeTab} view.`);
-
-                } else {
-
-                    showAlert("Import Successful", "The asset has been added to your library.");
-
-                }
-
-            }
-
-        } catch (err) {
-
-            console.error("[IMPORT] Error during import:", err);
-
-            showAlert("Import Failed", "There was an error importing the file.");
-
-        }
-
+    const handleImport = async () => {
+        console.log("[IMPORT] Import finished, reloading assets...");
+        await loadAssets();
     };
 
-
-
     const handleDelete = async (e, id) => {
-
         e.stopPropagation();
-
         showConfirm("Delete Asset", "Are you sure you want to delete this asset from the library?", async () => {
-
             await db.deleteAsset(id);
-
             await loadAssets();
-
         });
-
     };
 
     const filteredAssets = assets.filter(a => a.type === activeTab);
@@ -636,7 +754,18 @@ const RenderNode = ({ nodeId, nodes, connections, resolution, wallColor, isLive,
         return (
             <div style={{width: '100%', height: '100%', position: 'relative', backgroundColor: isLive ? 'black' : 'transparent'}}>
                 {node.type === 'image' && node.data.value && <img src={node.data.value} style={style} />}
-                {node.type === 'video' && node.data.value && <video key={node.data.value} src={node.data.value} style={style} autoPlay loop muted playsInline crossOrigin="anonymous" />}
+                {node.type === 'video' && node.data.value && (
+                    <video 
+                        key={node.data.value} 
+                        src={node.data.value} 
+                        style={style} 
+                        autoPlay 
+                        loop 
+                        muted={!(node.data.enableAudio ?? false)} 
+                        playsInline 
+                        crossOrigin="anonymous" 
+                    />
+                )}
             </div>
         );
     }
@@ -864,6 +993,23 @@ const Node = ({ id, type, x, y, label, selected, onDragStart, onHandleClick, dat
                     </div>
                 )}
                 
+                {type === 'video' && (
+                    <div className="pt-2 border-t border-zinc-700/50">
+                        <div className="flex items-center justify-between">
+                            <label className="text-xs text-gray-400 font-bold flex items-center gap-2">
+                                <Activity size={12} className="text-pink-400" /> Enable Audio
+                            </label>
+                            <input 
+                                type="checkbox" 
+                                checked={data?.enableAudio ?? false} 
+                                onChange={(e) => updateData(id, { enableAudio: e.target.checked })} 
+                                className="form-checkbox h-4 w-4 text-pink-600 bg-zinc-800 border-zinc-600 rounded focus:ring-pink-500" 
+                            />
+                        </div>
+                        <p className="text-[9px] text-gray-500 mt-1">Warning: Multiple audio sources may overlap.</p>
+                    </div>
+                )}
+
                 {(type === 'image' || type === 'video') && (
                     <div className="space-y-2 border-t border-zinc-700 pt-2">
                         <div className="grid grid-cols-2 gap-2">
@@ -1348,6 +1494,28 @@ export default function App() {
     const [showProjectManager, setShowProjectManager] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [activeProjectId, setActiveProjectId] = useState(null);
+    const [usbDrives, setUsbDrives] = useState([]);
+    
+    // USB Polling
+    useEffect(() => {
+        const checkDrives = async () => {
+            const drives = await db.getDrives();
+            setUsbDrives(prev => {
+                if (drives.length > prev.length) {
+                    // New drive detected!
+                    const newDrive = drives.find(d => !prev.some(pd => pd.path === d.path));
+                    if (newDrive) {
+                        console.log("USB Detected:", newDrive.name);
+                        // Optional: show a small toast or notification
+                    }
+                }
+                return drives;
+            });
+        };
+        const interval = setInterval(checkDrives, 5000);
+        checkDrives();
+        return () => clearInterval(interval);
+    }, []);
     
     const [menuTab, setMenuTab] = useState('config'); 
     const [scenes, setScenes] = useState([]); // Start empty
@@ -1685,11 +1853,24 @@ export default function App() {
                                     <div className="text-lg font-bold text-white">Act {currentSceneIndex + 1} - Cue {currentCueIndex + 1}</div>
                                 </div>
                             ) : (<>
-                                <h1 className="text-xl font-bold tracking-wider text-white uppercase">MAPPING STUDIO</h1>
-                                <div className="flex gap-2 mt-1">
-                                    <span className={`text-xs px-1.5 py-0.5 rounded font-mono border transition-colors ${moveMode ? 'bg-orange-600 border-orange-400 text-white' : 'bg-zinc-800 border-zinc-600 text-gray-200'}`}>M: Move All</span>
-                                    <span className={`text-xs px-1.5 py-0.5 rounded font-mono border transition-colors ${showGuides ? 'bg-blue-900 border-blue-500 text-blue-200' : 'bg-zinc-800 border-zinc-600 text-gray-200'}`}>G: Guides</span>
-                                    <span className="text-xs bg-zinc-800 px-1.5 py-0.5 rounded text-gray-200 font-mono border border-zinc-600 uppercase">H: Menu</span>
+                                <div className="flex items-center gap-3">
+                                    <div>
+                                        <h1 className="text-xl font-bold tracking-wider text-white uppercase">MAPPING STUDIO</h1>
+                                        <div className="flex gap-2 mt-1">
+                                            <span className={`text-xs px-1.5 py-0.5 rounded font-mono border transition-colors ${moveMode ? 'bg-orange-600 border-orange-400 text-white' : 'bg-zinc-800 border-zinc-600 text-gray-200'}`}>M: Move All</span>
+                                            <span className={`text-xs px-1.5 py-0.5 rounded font-mono border transition-colors ${showGuides ? 'bg-blue-900 border-blue-500 text-blue-200' : 'bg-zinc-800 border-zinc-600 text-gray-200'}`}>G: Guides</span>
+                                            <span className="text-xs bg-zinc-800 px-1.5 py-0.5 rounded text-gray-200 font-mono border border-zinc-600 uppercase">H: Menu</span>
+                                        </div>
+                                    </div>
+                                    
+                                    {usbDrives.length > 0 && (
+                                        <button 
+                                            onClick={() => setAssetBrowserState({ isOpen: true, type: 'image', callback: () => {} })}
+                                            className="bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-2 animate-bounce-subtle shadow-lg shadow-orange-900/40 pointer-events-auto"
+                                        >
+                                            <Cable size={16} /> USB DETECTED ({usbDrives.length})
+                                        </button>
+                                    )}
                                 </div>
                             </>)}
                         </div>

@@ -1,15 +1,28 @@
+# Databases and Project Files
+emap.db
+projects/
+assets/
+!assets/.gitkeep
+
 # Rust build artifacts
 /target
+Cargo.lock
 
-# Databases
-*.db
-projects/*.db
-
-# Node dependencies
+# UI / Node dependencies and builds
 node_modules/
 ui/node_modules/
+ui/dist/
+.npm
+.eslintcache
 
 # System and temporary files
 .DS_Store
 *.log
 **/*.rs.bk
+*.tmp
+/temp/
+
+# Environment and local scripts
+.env
+local_config.json
+# start_emap.sh # Uncomment if you want to keep the launch script local-only

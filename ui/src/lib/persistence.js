@@ -108,12 +108,24 @@ export class PersistenceManager {
         }
     }
 
-    async importAssetFromPath(path) {
+    async getDrives() {
+        try {
+            const res = await fetch('/api/drives');
+            if (!res.ok) return [];
+            return await res.json();
+        } catch (e) {
+            console.error("Get Drives error", e);
+            return [];
+        }
+    }
+
+    async importAssetFromPath(path, overwrite = false) {
         const res = await fetch('/api/asset/import', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path })
+            body: JSON.stringify({ path, overwrite })
         });
+        if (res.status === 409) return { conflict: true, path };
         if (!res.ok) throw new Error('Import failed');
         return await res.json();
     }

@@ -1,4 +1,4 @@
-use actix_web::{delete, get, post, web, middleware, App, HttpRequest, HttpResponse, HttpServer, Responder};
+use actix_web::{delete, get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -11,6 +11,13 @@ use std::thread;
 use futures_util::StreamExt;
 use std::io::Write;
 use qmetaobject::prelude::*;
+use std::net::UdpSocket;
+
+fn get_local_ip() -> Option<String> {
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    socket.local_addr().ok().map(|addr| addr.ip().to_string())
+}
 
 // --- Database & API (Same as before) ---
 
@@ -205,11 +212,50 @@ async fn list_files(web::Query(params): web::Query<ListParams>) -> impl Responde
 }
 
 #[derive(Deserialize)]
-struct ImportRequest { path: String }
+struct ImportRequest { path: String, overwrite: Option<bool> }
+
+#[get("/api/drives")]
+async fn get_drives() -> impl Responder {
+    let res = web::block(move || {
+        let mut drives = Vec::new();
+        #[cfg(target_os = "linux")]
+        let mount_points = vec![
+            format!("/media/{}", std::env::var("USER").unwrap_or_default()),
+            format!("/run/media/{}", std::env::var("USER").unwrap_or_default()),
+            "/media".to_string(),
+            "/mnt".to_string(),
+        ];
+        #[cfg(target_os = "freebsd")]
+        let mount_points = vec!["/media".to_string(), "/mnt".to_string()];
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        let mount_points: Vec<String> = vec![];
+
+        for mp in mount_points {
+            if let Ok(entries) = fs::read_dir(mp) {
+                for entry in entries.flatten() {
+                    if let Ok(meta) = entry.metadata() {
+                        if meta.is_dir() {
+                            drives.push(FileItem {
+                                name: entry.file_name().to_string_lossy().to_string(),
+                                path: entry.path().to_string_lossy().to_string(),
+                                type_: "drive".to_string(),
+                                size: "".to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        drives
+    }).await;
+    match res { Ok(drives) => HttpResponse::Ok().json(drives), Err(_) => HttpResponse::InternalServerError().finish() }
+}
+
 #[post("/api/asset/import")]
 async fn import_asset(data: web::Data<AppState>, req: web::Json<ImportRequest>) -> impl Responder {
     let req_path = req.path.clone();
-    println!("[BACKEND] Import request: {}", req_path);
+    let overwrite = req.overwrite.unwrap_or(false);
+    println!("[BACKEND] Import request: {} (overwrite: {})", req_path, overwrite);
     let res = web::block(move || {
         let src = PathBuf::from(&req_path);
         if !src.exists() { return Err("File not found".to_string()); }
@@ -217,6 +263,11 @@ async fn import_asset(data: web::Data<AppState>, req: web::Json<ImportRequest>) 
         let run_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let assets_dir = run_dir.join("assets");
         let dest = assets_dir.join(&name);
+        
+        if dest.exists() && !overwrite {
+            return Err("Conflict".to_string());
+        }
+
         if src.parent().map(|p| p != assets_dir).unwrap_or(true) { fs::copy(&src, &dest).map_err(|e| e.to_string())?; }
         let mime_type = mime_guess::from_path(&dest).first_or_octet_stream().to_string();
         let db_guard = data.project_db.lock().unwrap();
@@ -224,7 +275,11 @@ async fn import_asset(data: web::Data<AppState>, req: web::Json<ImportRequest>) 
         conn.execute("INSERT OR REPLACE INTO assets (id, name, mime_type) VALUES (?1, ?2, ?3)", params![name, name, mime_type]).unwrap();
         Ok(name)
     }).await;
-    match res { Ok(Ok(name)) => HttpResponse::Ok().json(serde_json::json!({ "status": "imported", "id": name })), _ => HttpResponse::InternalServerError().finish() }
+    match res { 
+        Ok(Ok(name)) => HttpResponse::Ok().json(serde_json::json!({ "status": "imported", "id": name })),
+        Ok(Err(e)) if e == "Conflict" => HttpResponse::Conflict().body("File already exists"),
+        _ => HttpResponse::InternalServerError().finish() 
+    }
 }
 
 #[post("/api/asset/{id}")]
@@ -313,11 +368,27 @@ fn main() {
                     .service(get_monitors).service(save_monitor_config).service(list_projects).service(delete_project).service(create_project)
                     .service(load_project).service(get_active_project).service(get_kv).service(save_kv).service(list_assets)
                     .service(list_files).service(import_asset).service(save_asset).service(get_asset).service(delete_asset)
+                    .service(get_drives)
                     .service(Files::new("/", "./ui/dist").index_file("index.html"))
             })
-            .bind(("127.0.0.1", 8080)).unwrap();
+            .bind(("0.0.0.0", 8080)).unwrap();
+
+            let local_ip = get_local_ip();
             
             let _ = server_tx.send(());
+            println!("\n==========================================");
+            println!("Emap Server is running!");
+            println!("Local access:   http://127.0.0.1:8080");
+            
+            match local_ip {
+                Some(ip) if ip != "127.0.0.1" => {
+                    println!("Network access: http://{}:8080", ip);
+                },
+                _ => {
+                    println!("Network access: [OFFLINE] No network connection detected.");
+                }
+            }
+            println!("==========================================\n");
             server.run().await.unwrap();
         });
     });
