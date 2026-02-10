@@ -85,7 +85,10 @@ case $PM in
             qt5-widgets qt5-webengine rust automount x11-wm/cage \
             gstreamer1-plugins-good gstreamer1-libav node \
             alsa-utils seatd drm-kmod libGL libXcomposite libXrender \
-            mesa-libs
+            mesa-libs glproto dri2proto
+        
+        # Help pkg-config find OpenGL
+        export PKG_CONFIG_PATH="/usr/local/libdata/pkgconfig:/usr/local/lib/pkgconfig"
         
         echo "Configuring FreeBSD Wayland permissions..."
         $SUDO sysrc seatd_enable="YES"
