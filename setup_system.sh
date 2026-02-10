@@ -96,22 +96,94 @@ case $PM in
     cargo build --release
     
     # 6. Create Launch Script (The Kiosk Mode)
-    echo "[5/5] Creating start_emap.sh kiosk script..."
+    echo "[5/6] Creating start_emap.sh kiosk script..."
+    # We use full paths so it works from boot services
+    APP_PATH=$(pwd)
     cat <<EOF > start_emap.sh
     #!/bin/bash
     # This script launches Emap in a pure Wayland Kiosk mode using Cage
-    # No desktop, no bars, just the app.
-    export QT_QPA_PLATFORM=wayland
-    cage ./target/release/emap
-    EOF
-    chmod +x start_emap.sh
     
-    # 7. Finalizing
+    # Disable screen blanking and power management (Linux TTY)
+    if command -v setterm &> /dev/null; then
+        setterm -blank 0 -powersave off -powerdown 0 < /dev/tty7 > /dev/tty7 2>&1
+    fi
+    
+    export QT_QPA_PLATFORM=wayland
+    export QT_VIDEO_HOLEPUNCH=1
+    export XDG_RUNTIME_DIR=/run/user/\$(id -u)
+    
+    # Ensure runtime dir exists for Wayland
+    if [ ! -d "\$XDG_RUNTIME_DIR" ]; then
+        export XDG_RUNTIME_DIR=/tmp/wayland-runtime-\$(id -u)
+        mkdir -p \$XDG_RUNTIME_DIR
+        chmod 700 \$XDG_RUNTIME_DIR
+    fi
+    
+    cd $APP_PATH
+    # Cage launches the app fullscreen and inhibits idle by default in many versions
+    cage ./target/release/emap
+    EOF    chmod +x start_emap.sh
+    
+    # 7. Configure Start on Boot
+    echo "[6/6] Configuring Start on Boot..."
+    if [ "$PM" == "pkg" ]; then
+        # FreeBSD RC Script
+        echo "Creating FreeBSD RC script..."
+        cat <<EOF | sudo tee /usr/local/etc/rc.d/emap
+    #!/bin/sh
+    # PROVIDE: emap
+    # REQUIRE: LOGIN cleanvar
+    # KEYWORD: shutdown
+    
+    . /etc/rc.subr
+    
+    name="emap"
+    rcvar="emap_enable"
+    command="$APP_PATH/start_emap.sh"
+    
+    load_rc_config \$name
+    run_rc_command "\$1"
+    EOF
+        sudo chmod +x /usr/local/etc/rc.d/emap
+        echo "To enable on FreeBSD: sudo sysrc emap_enable=YES"
+    else
+        # Linux systemd Service
+        echo "Creating Linux systemd service..."
+        cat <<EOF | sudo tee /etc/systemd/system/emap.service
+    [Unit]
+    Description=Emap Projection Kiosk
+    After=network.target sound.target
+    
+    [Service]
+    Type=simple
+    User=$(whoami)
+    WorkingDirectory=$APP_PATH
+    ExecStart=$APP_PATH/start_emap.sh
+    Restart=always
+    RestartSec=5
+    # Give it a virtual TTY if needed
+    StandardInput=tty
+    StandardOutput=journal
+    TTYPath=/dev/tty7
+    
+    [Install]
+    WantedBy=multi-user.target
+    EOF
+        sudo systemctl daemon-reload
+        echo "To enable on Linux: sudo systemctl enable emap"
+    fi
+    
+    # 8. Finalizing
     echo "=========================================="
     echo "Setup Complete!"
-    echo "To start the system in Kiosk Mode, run: ./start_emap.sh"
+    echo "1. To test manually: ./start_emap.sh"
+    echo "2. To enable start-on-boot:"
+    if [ "$PM" == "pkg" ]; then
+        echo "   sudo sysrc emap_enable=YES"
+    else
+        echo "   sudo systemctl enable emap"
+    fi
     echo "=========================================="
-
 # --- CLEANUP SECTION (Commented out for development) ---
 # The following commands reduce disk usage by deleting build artifacts
 # after the binary is created. 
