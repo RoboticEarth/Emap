@@ -76,11 +76,13 @@ export class PersistenceManager {
     }
 
     async saveState(key, data) {
-        await fetch('/api/kv/' + key, {
+        const res = await fetch('/api/kv/' + key, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
+        // Only log error if it's not a "No project loaded" (400) situation
+        if (!res.ok && res.status !== 400) console.error(`[PERSISTENCE] Failed to save state for ${key}: ${res.status}`);
     }
 
     async loadState(key) {
@@ -128,6 +130,19 @@ export class PersistenceManager {
         if (res.status === 409) return { conflict: true, path };
         if (!res.ok) throw new Error('Import failed');
         return await res.json();
+    }
+
+    async deleteFileSystemItem(path) {
+        await fetch('/api/fs/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path })
+        });
+    }
+
+    async resetMonitorConfig() {
+        await fetch('/api/config/reset', { method: 'POST' });
+        window.location.reload();
     }
 }
 

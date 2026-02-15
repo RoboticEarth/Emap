@@ -168,6 +168,16 @@ const FileExplorer = ({ isOpen, onClose, onImport }) => {
         );
     };
 
+    const handleDeleteItem = async (e, path, name) => {
+        e.stopPropagation();
+        if (confirm(`Are you sure you want to permanently delete "${name}" from disk?`)) {
+            setLoading(true);
+            await db.deleteFileSystemItem(path);
+            await loadPath(currentPath);
+            setLoading(false);
+        }
+    };
+
     const selectAll = () => {
         const allFiles = items.filter(i => i.type === 'file').map(i => i.path);
         setSelectedPaths(allFiles);
@@ -278,7 +288,7 @@ const FileExplorer = ({ isOpen, onClose, onImport }) => {
                                             <CheckCircle size={14} />
                                         </div>
                                     )}
-                                    <div className="w-full aspect-square bg-black mb-2 flex items-center justify-center overflow-hidden rounded-md border border-zinc-800 shadow-inner">
+                                    <div className="w-full aspect-square bg-black mb-2 flex items-center justify-center overflow-hidden rounded-md border border-zinc-800 shadow-inner group/item relative">
                                         {item.type === 'file' ? ( 
                                             <img 
                                                 src={`/api/asset/${encodeURIComponent(item.name)}`} 
@@ -293,6 +303,16 @@ const FileExplorer = ({ isOpen, onClose, onImport }) => {
                                                 <File size={40} className="text-zinc-600" /> 
                                             )}
                                         </div>
+                                        {/* Quick Delete for files/dirs (not drives) */}
+                                        {item.type !== 'drive' && (
+                                            <button 
+                                                onClick={(e) => handleDeleteItem(e, item.path, item.name)}
+                                                className="absolute top-1 left-1 p-1 bg-red-600/80 hover:bg-red-600 text-white rounded opacity-0 group-hover/item:opacity-100 transition-opacity z-20"
+                                                title="Delete from disk"
+                                            >
+                                                <Trash2 size={12}/>
+                                            </button>
+                                        )}
                                     </div>
                                     <span className="text-[10px] font-bold text-gray-300 truncate w-full text-center px-1" title={item.name}>{item.name}</span> 
                                 </div> 
@@ -304,16 +324,16 @@ const FileExplorer = ({ isOpen, onClose, onImport }) => {
                 
                 <div className="p-4 border-t border-zinc-800 bg-zinc-950 flex justify-between items-center">
                     <div className="text-[10px] text-gray-500 font-bold uppercase">
-                        {selectedPaths.length} items to import
+                        {selectedPaths.length} items selected
                     </div>
                     <div className="flex gap-2">
                         <button onClick={onClose} className="px-4 py-2 rounded text-xs font-bold text-gray-500 hover:text-white transition-colors">CANCEL</button>
                         <button 
                             onClick={handleImportProcess} 
                             disabled={selectedPaths.length === 0 || loading} 
-                            className="px-8 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed shadow-lg shadow-blue-900/20 transition-all active:scale-95"
+                            className="px-8 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed shadow-lg shadow-blue-900/20 transition-all active:scale-95 uppercase tracking-widest"
                         >
-                            IMPORT SELECTED
+                            {activeTab === 'server' ? 'IMPORT TO PROJECT' : 'IMPORT TO ASSETS'}
                         </button>
                     </div>
                 </div>
@@ -413,7 +433,9 @@ const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, initi
                                                                                                         )}                                                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">                                    <div className="absolute top-2 right-2">
                                         <button onClick={(e) => handleDelete(e, asset.id)} className="p-1.5 bg-red-600 rounded-md text-white hover:bg-red-500 shadow-lg" title="Delete Asset"><Trash2 size={14}/></button>
                                     </div>
-                                    <span className="bg-blue-600 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg transform translate-y-4 group-hover:translate-y-0 transition-transform">Select</span>
+                                    {onSelect && (
+                                        <span className="bg-blue-600 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg transform translate-y-4 group-hover:translate-y-0 transition-transform">Select</span>
+                                    )}
                                 </div>
                                 <div className="absolute bottom-0 left-0 right-0 bg-black/60 backdrop-blur px-2 py-1">
                                     <p className="text-[10px] text-gray-300 truncate">{asset.file.name}</p>
@@ -437,7 +459,7 @@ const LoadingScreen = () => (
     </div>
 );
 
-const ProjectManager = ({ isOpen, onClose, activeProjectId, showConfirm, showAlert }) => {
+const ProjectManager = ({ isOpen, onClose, activeProjectId, showConfirm, showAlert, setIsLoading }) => {
     const [projects, setProjects] = useState([]);
     const [newProjectName, setNewProjectName] = useState('');
     const [loading, setLoading] = useState(false);
@@ -456,13 +478,13 @@ const ProjectManager = ({ isOpen, onClose, activeProjectId, showConfirm, showAle
 
     const handleCreate = async () => {
         if (!newProjectName.trim()) return;
-        setLoading(true);
+        setIsGlobalLoading(true);
         try {
             await db.createProject(newProjectName);
             window.location.reload();
         } catch (e) {
             console.error(e);
-            setLoading(false);
+            setIsGlobalLoading(false);
         }
     };
 
@@ -470,13 +492,33 @@ const ProjectManager = ({ isOpen, onClose, activeProjectId, showConfirm, showAle
         setIsGlobalLoading(true);
         try {
             await db.loadProject(id);
+            // reload is handled inside loadProject
         } catch (e) {
             console.error(e);
             setIsGlobalLoading(false);
         }
     };
 
-    const canClose = onClose && projects.some(p => p.id === activeProjectId);
+    const handleDeleteProject = async (id, name) => {
+        showConfirm("Delete Project", `Are you sure you want to delete project "${name}"? This cannot be undone.`, async () => {
+            setIsGlobalLoading(true);
+            try {
+                await db.deleteProject(id);
+                if (id === activeProjectId) {
+                    window.location.reload(); // Refresh to clear all state
+                } else {
+                    await loadProjects();
+                    setIsGlobalLoading(false);
+                }
+            } catch (e) {
+                console.error(e);
+                setIsGlobalLoading(false);
+            }
+        });
+    };
+
+    // Can only close if there's an active project
+    const canClose = onClose && activeProjectId !== null;
 
     if (!isOpen) return null;
 
@@ -484,7 +526,24 @@ const ProjectManager = ({ isOpen, onClose, activeProjectId, showConfirm, showAle
         <div className="fixed inset-0 z-[300] bg-black/90 backdrop-blur-md flex items-center justify-center p-8">
             {isGlobalLoading && <LoadingScreen />}
             <div className="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-md p-6 shadow-2xl">
-                <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2"><Database size={24} className="text-blue-500"/> Project Manager</h2>
+                <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-2xl font-bold text-white flex items-center gap-2"><Database size={24} className="text-blue-500"/> Projects</h2>
+                    <button 
+                        onClick={() => {
+                            showConfirm(
+                                "Reset Monitor Setup", 
+                                "This will restart the monitor configuration process on all screens. Continue?", 
+                                () => {
+                                    setIsLoading(true);
+                                    db.resetMonitorConfig();
+                                }
+                            );
+                        }}
+                        className="bg-zinc-800 hover:bg-zinc-700 text-gray-400 hover:text-white px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider flex items-center gap-2 transition-colors border border-zinc-700"
+                    >
+                        <MonitorOff size={14} /> Reselect Monitors
+                    </button>
+                </div>
                 
                 <div className="mb-6">
                     <label className="text-xs font-bold text-gray-500 mb-2 block">CREATE NEW PROJECT</label>
@@ -504,12 +563,9 @@ const ProjectManager = ({ isOpen, onClose, activeProjectId, showConfirm, showAle
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <button onClick={() => handleLoadProject(p.id)} className="text-xs text-gray-500 hover:text-white px-2 py-1">{p.id === activeProjectId ? 'Reload' : 'Load'}</button>
-                                    <button onClick={async (e) => {
+                                    <button onClick={(e) => {
                                         e.stopPropagation();
-                                        showConfirm("Delete Project", `Are you sure you want to delete project "${p.name}"? This cannot be undone.`, async () => {
-                                            await db.deleteProject(p.id);
-                                            loadProjects();
-                                        });
+                                        handleDeleteProject(p.id, p.name);
                                     }} className="text-gray-500 hover:text-red-400 p-1"><Trash2 size={14}/></button>
                                 </div>
                             </div>
@@ -1428,13 +1484,28 @@ const WallItem = ({ wall, activeWallId, setActiveWallId, moveWall, deleteWall })
     );
 };
 
-const FolderItem = ({ folder, walls, activeWallId, setActiveWallId, setWalls, setFolders, moveWall, deleteWall }) => {
+const FolderItem = ({ folder, walls, activeWallId, setActiveWallId, setWalls, setFolders, moveWall, deleteWall, showConfirm }) => {
     const folderWalls = walls.filter(w => w.folderId === folder.id);
     return (
         <div className="mb-2">
             <div className="flex items-center gap-2 p-2 bg-zinc-800 hover:bg-zinc-700 rounded cursor-pointer text-xs font-bold text-gray-300" onClick={() => setFolders(prev => prev.map(f => f.id === folder.id ? {...f, isOpen: !f.isOpen} : f))}>
                 {folder.isOpen ? <ChevronDown size={14}/> : <ChevronRight size={14}/>} <Folder size={14} className="text-blue-400" /> {folder.name} <span className="ml-auto text-[10px] text-gray-500">{folderWalls.length}</span>
-                <button onClick={(e) => {e.stopPropagation(); if (confirm(`Delete folder?`)) { setFolders(prev => prev.filter(f => f.id !== folder.id)); setWalls(prev => prev.map(w => w.folderId === folder.id ? {...w, folderId: null} : w)) }}} className="text-gray-500 hover:text-red-400 ml-2"><Trash2 size={12}/></button>
+                <button 
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        showConfirm(
+                            "Delete Group", 
+                            `Are you sure you want to delete the group "${folder.name}"? The objects inside will not be deleted.`, 
+                            () => {
+                                setFolders(prev => prev.filter(f => f.id !== folder.id));
+                                setWalls(prev => prev.map(w => w.folderId === folder.id ? {...w, folderId: null} : w));
+                            }
+                        );
+                    }} 
+                    className="text-gray-500 hover:text-red-400 ml-2"
+                >
+                    <Trash2 size={12}/>
+                </button>
             </div>
             {folder.isOpen && (
                 <div className="ml-2 pl-2 border-l border-zinc-700 mt-1 space-y-1">
@@ -1526,10 +1597,24 @@ export default function App() {
     const [currentCueState, setCurrentCueState] = useState(null);
     const requestRef = useRef();
     const startTimeRef = useRef();
+    const lastSaveRef = useRef(0);
     const saveTimeoutRef = useRef();
 
     const [lastDisplayState, setLastDisplayState] = useState(null);
     const prevMenuTabRef = useRef(menuTab);
+
+    useEffect(() => {
+        if (activeSelection) {
+            db.saveState('active_cue_selection', activeSelection);
+        }
+    }, [activeSelection]);
+
+    // Synchronize UI state to the projection screens
+    useEffect(() => {
+        if (isLoading) return; // DON'T SYNC WHILE LOADING
+        console.log("[APP] Syncing UI state...");
+        db.saveState('ui_sync_state', { viewMode, menuTab, showGuides, activeWallId });
+    }, [viewMode, menuTab, showGuides, activeWallId, isLoading]);
 
     useEffect(() => {
         if (prevMenuTabRef.current !== 'scenes' && menuTab === 'scenes') {
@@ -1548,6 +1633,7 @@ export default function App() {
 
     useEffect(() => {
         const loadData = async () => {
+            setIsLoading(true);
             try {
                 const activeProject = await db.getActiveProject();
                 if (activeProject && activeProject.id) {
@@ -1565,6 +1651,7 @@ export default function App() {
                     setStorageUsage(usage);
                     setShowProjectManager(false);
                 } else {
+                    // No active project, force project manager
                     setActiveProjectId(null);
                     setShowProjectManager(true);
                 }
@@ -1572,19 +1659,41 @@ export default function App() {
                 console.error("Failed to load state", e);
                 setShowProjectManager(true);
             } finally {
-                setTimeout(() => setIsLoading(false), 500);
+                // Keep loading screen up for a bit to ensure UI is ready
+                setTimeout(() => setIsLoading(false), 800);
             }
         };
         loadData();
     }, []);
 
     useEffect(() => {
-        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-        saveTimeoutRef.current = setTimeout(async () => {
+        if (isLoading || !activeProjectId) return; // DON'T SAVE WHILE LOADING OR WITHOUT PROJECT
+
+        const now = Date.now();
+        const throttleMs = 50; 
+
+        const doSave = async () => {
+            console.log("[APP] Executing save to database for project:", activeProjectId);
+            lastSaveRef.current = Date.now();
             await db.saveState('project_data_v22', { walls, folders, scenes });
-        }, 1000);
-        return () => clearTimeout(saveTimeoutRef.current);
-    }, [walls, folders, scenes]);
+        };
+
+        if (now - lastSaveRef.current > throttleMs) {
+            console.log("[APP] Throttled save triggered");
+            doSave();
+            if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+        } else {
+            if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+            saveTimeoutRef.current = setTimeout(() => {
+                console.log("[APP] Debounced save triggered");
+                doSave();
+            }, 500); // Wait 500ms for the final save to be safe
+        }
+
+        return () => {
+            if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+        };
+    }, [walls, folders, scenes, isLoading, activeProjectId]);
 
     useEffect(() => {
         const handleFsChange = () => setIsFullscreen(!!document.fullscreenElement);
@@ -1838,9 +1947,9 @@ export default function App() {
                 </div>
             )}
 
-                                <ProjectManager isOpen={showProjectManager} onClose={() => setShowProjectManager(false)} activeProjectId={activeProjectId} showConfirm={showConfirm} showAlert={showAlert} />
+                                <ProjectManager isOpen={showProjectManager} onClose={() => setShowProjectManager(false)} activeProjectId={activeProjectId} showConfirm={showConfirm} showAlert={showAlert} setIsLoading={setIsLoading} />
                                 <AssetBrowser isOpen={assetBrowserState.isOpen} onClose={() => setAssetBrowserState({isOpen:false})} onSelect={(a) => {assetBrowserState.callback(a); setAssetBrowserState({isOpen:false})}} initialTab={assetBrowserState.type} showConfirm={showConfirm} showAlert={showAlert} />
-            <div className={`absolute inset-0 h-full z-0`}>
+            <div className={`absolute inset-0 h-full z-0 ${!activeProjectId ? 'hidden' : ''}`}>
                 <div className="absolute inset-0 z-10" onClick={() => setActiveWallId(null)}>
                     <WallBackgroundLayer walls={walls} currentCueState={currentCueState} isLive={viewMode === 'live'} isTransitioning={transitionMix < 1} shouldShow={menuTab === 'scenes'} />
                     {(viewMode === 'live' || menuTab === 'scenes') && <TransitioningProjectedContent prevCueState={prevCueState} currentCueState={currentCueState} mix={transitionMix} walls={walls} isLive={viewMode === 'live'} />}
@@ -1885,7 +1994,12 @@ export default function App() {
                             <div className="text-center bg-zinc-900/80 p-8 rounded-2xl border border-zinc-800 shadow-2xl">
                                 <Workflow size={48} className="text-purple-500 mx-auto mb-4 opacity-50" />
                                 <p className="text-gray-400 font-bold mb-2 uppercase tracking-widest">No Cue Selected</p>
-                                <p className="text-xs text-gray-500 max-w-[200px] mx-auto">Please create or select an Act and a Cue in the sidebar to start mapping nodes.</p>
+                                <p className="text-xs text-gray-500 max-w-[200px] mx-auto mb-4">Please create or select an Act and a Cue in the sidebar to start mapping nodes.</p>
+                                {scenes.length === 0 ? (
+                                    <button onClick={addScene} className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded font-bold text-xs uppercase tracking-widest transition-all active:scale-95 shadow-lg shadow-purple-900/40">Create First Act</button>
+                                ) : (
+                                    <button onClick={() => addCue(scenes[0].id)} className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded font-bold text-xs uppercase tracking-widest transition-all active:scale-95 shadow-lg shadow-purple-900/40">Add Cue to {scenes[0].name}</button>
+                                )}
                             </div>
                         </div>
                     ) : (
@@ -1951,7 +2065,7 @@ export default function App() {
                                             <button onClick={() => { const newId = Math.max(0, ...walls.map(w => w.id)) + 1; setWalls(p => [...p, { id: newId, name: `Obj ${newId}`, color: `hsl(${Math.random()*360},70%,60%)`, folderId: null, points: [{x:300,y:300},{x:400,y:300},{x:400,y:400},{x:300,y:400}] }]); }} className="text-xs bg-zinc-800 hover:bg-zinc-700 px-2 py-1 rounded flex items-center gap-1" title="New Object"> <Plus size={12} /> </button>
                                         </div>
                                     </div>
-                                    {folders.map(folder => (<FolderItem key={folder.id} folder={folder} walls={walls} activeWallId={activeWallId} setActiveWallId={setActiveWallId} setWalls={setWalls} setFolders={setFolders} moveWall={moveWall} deleteWall={deleteWall} />))}
+                                    {folders.map(folder => (<FolderItem key={folder.id} folder={folder} walls={walls} activeWallId={activeWallId} setActiveWallId={setActiveWallId} setWalls={setWalls} setFolders={setFolders} moveWall={moveWall} deleteWall={deleteWall} showConfirm={showConfirm} />))}
                                     {walls.filter(w => w.folderId === null).map(wall => (<WallItem key={wall.id} wall={wall} activeWallId={activeWallId} setActiveWallId={setActiveWallId} moveWall={moveWall} deleteWall={deleteWall} />))}
                                 </div>
                                 
@@ -1989,7 +2103,15 @@ export default function App() {
                                             <div className="space-y-0 pl-1">
                                                 {scene.cues.map((cue, cIdx) => {
                                                     const isActive = activeSelection.type === 'cue' && activeSelection.sceneId === scene.id && activeSelection.cueId === cue.id;
-                                                    const nextCue = scene.cues[cIdx + 1] || (scenes[sIdx+1]?.cues[0]);
+                                                    
+                                                    // Find the next cue, even if it's in the next Act
+                                                    let nextCue = scene.cues[cIdx + 1];
+                                                    let nextSceneId = scene.id;
+                                                    if (!nextCue && scenes[sIdx + 1]) {
+                                                        nextCue = scenes[sIdx + 1].cues[0];
+                                                        nextSceneId = scenes[sIdx + 1].id;
+                                                    }
+
                                                     return (
                                                         <div key={cue.id}>
                                                             <div onClick={() => setActiveSelection({ type: 'cue', sceneId: scene.id, cueId: cue.id })} className={`flex items-center gap-2 p-2 rounded text-xs cursor-pointer transition-all group ${isActive ? 'bg-purple-900/50 border-l-2 border-purple-400 text-white' : 'hover:bg-zinc-800 text-gray-400 border-l-2 border-transparent'}`}>
@@ -2002,7 +2124,7 @@ export default function App() {
                                                                 </div>
                                                             </div>
                                                             {nextCue && (
-                                                                <div className={`h-2 my-0.5 rounded-full mx-2 cursor-pointer hover:bg-purple-500/50 transition-colors group relative flex justify-center items-center ${activeSelection.type === 'transition' && activeSelection.nextCueId === nextCue.id ? 'bg-purple-500' : 'bg-zinc-800'}`} onClick={() => setActiveSelection({ type: 'transition', sceneId: scene.id, prevCueId: cue.id, nextCueId: nextCue.id })}>
+                                                                <div className={`h-2 my-0.5 rounded-full mx-2 cursor-pointer hover:bg-purple-500/50 transition-colors group relative flex justify-center items-center ${activeSelection.type === 'transition' && activeSelection.nextCueId === nextCue.id ? 'bg-purple-500' : 'bg-zinc-800'}`} onClick={() => setActiveSelection({ type: 'transition', sceneId: nextSceneId, prevCueId: cue.id, nextCueId: nextCue.id, cueId: nextCue.id })}>
                                                                     <div className="w-3 h-3 rounded-full bg-zinc-600 border border-zinc-900 group-hover:bg-white group-hover:scale-125 transition-transform flex items-center justify-center"><Link size={8} className="text-zinc-900"/></div>
                                                                 </div>
                                                             )}
@@ -2012,6 +2134,15 @@ export default function App() {
                                             </div>
                                         </div>
                                     ))}
+                                </div>
+
+                                <div className="mt-4 pt-4 border-t border-zinc-700">
+                                    <button 
+                                        onClick={() => setAssetBrowserState({ isOpen: true, type: 'image', callback: () => {} })} 
+                                        className="w-full bg-zinc-800 hover:bg-zinc-700 text-gray-300 py-2 rounded text-xs font-bold flex items-center justify-center gap-2"
+                                    >
+                                        <Folder size={14}/> Asset Library
+                                    </button>
                                 </div>
                             </div>
                         )}

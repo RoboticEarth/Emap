@@ -23,6 +23,7 @@ fn get_local_ip() -> Option<String> {
 
 struct AppState {
     global_db: Mutex<Connection>,
+    system_db: Mutex<Connection>,
     project_db: Mutex<Option<Connection>>,
     active_project_id: Mutex<Option<String>>,
 }
@@ -33,19 +34,36 @@ struct AssetMeta { id: String, name: String, mime_type: String }
 #[derive(Serialize, Deserialize)]
 struct ProjectMeta { id: String, name: String, created_at: String }
 
-#[derive(Serialize, Deserialize)]
-struct AppConfig { control_panel_monitor_id: u32 }
+#[derive(Serialize, Deserialize, Default)]
+struct AppConfig { dashboard_screen_name: String }
 
 #[derive(Serialize)]
 struct MonitorInfo { id: u32, x: i32, y: i32, width: u32, height: u32, is_primary: bool }
 
+#[derive(Deserialize)]
+struct IndexQuery { screen: Option<String> }
+
 #[get("/")]
-async fn index() -> impl Responder {
-    let monitors = DisplayInfo::all().unwrap_or_default();
-    if monitors.len() > 1 {
-        NamedFile::open_async("./ui/dist/setup.html").await
-    } else {
-        NamedFile::open_async("./ui/dist/index.html").await
+async fn index(data: web::Data<AppState>, query: web::Query<IndexQuery>) -> impl Responder {
+    let screen_name = query.screen.clone().unwrap_or_else(|| "Unknown".to_string());
+    
+    // Try to fetch the monitor config from the SYSTEM DB
+    let config_opt: Option<AppConfig> = {
+        let conn = data.system_db.lock().unwrap();
+        conn.query_row("SELECT value FROM system_data WHERE key = 'monitor_config'", [], |r| {
+            let s: String = r.get(0)?;
+            Ok(serde_json::from_str(&s).unwrap_or_default())
+        }).ok()
+    };
+
+    match config_opt {
+        Some(config) => {
+            if screen_name == config.dashboard_screen_name {
+                return NamedFile::open_async("./ui/dist/index.html").await;
+            }
+            NamedFile::open_async("./ui/dist/projection.html").await
+        },
+        None => NamedFile::open_async("./ui/dist/setup.html").await
     }
 }
 
@@ -68,9 +86,30 @@ async fn get_monitors() -> impl Responder {
 async fn save_monitor_config(data: web::Data<AppState>, config: web::Json<AppConfig>) -> impl Responder {
     let config_val = config.into_inner();
     let res = web::block(move || {
-        let conn = data.global_db.lock().unwrap();
+        let conn = data.system_db.lock().unwrap();
         let config_str = serde_json::to_string(&config_val).unwrap();
         conn.execute("INSERT OR REPLACE INTO system_data (key, value) VALUES (?1, ?2)", params!["monitor_config", config_str])
+    }).await;
+    match res { Ok(_) => HttpResponse::Ok().finish(), Err(_) => HttpResponse::InternalServerError().finish() }
+}
+
+#[get("/api/config/monitor")]
+async fn get_monitor_config(data: web::Data<AppState>) -> impl Responder {
+    let config_opt: Option<AppConfig> = {
+        let conn = data.system_db.lock().unwrap();
+        conn.query_row("SELECT value FROM system_data WHERE key = 'monitor_config'", [], |r| {
+            let s: String = r.get(0)?;
+            Ok(serde_json::from_str(&s).unwrap_or_default())
+        }).ok()
+    };
+    match config_opt { Some(c) => HttpResponse::Ok().json(c), None => HttpResponse::NotFound().finish() }
+}
+
+#[post("/api/config/reset")]
+async fn reset_monitor_config(data: web::Data<AppState>) -> impl Responder {
+    let res = web::block(move || {
+        let conn = data.system_db.lock().unwrap();
+        conn.execute("DELETE FROM system_data WHERE key = 'monitor_config'", [])
     }).await;
     match res { Ok(_) => HttpResponse::Ok().finish(), Err(_) => HttpResponse::InternalServerError().finish() }
 }
@@ -109,13 +148,66 @@ async fn create_project(data: web::Data<AppState>, req: web::Json<CreateProjectR
 #[delete("/api/projects/{id}")]
 async fn delete_project(data: web::Data<AppState>, id: web::Path<String>) -> impl Responder {
     let project_id = id.into_inner();
+    println!("[BACKEND] Request to delete project: {}", project_id);
+    
     let res = web::block(move || {
-        let conn = data.global_db.lock().unwrap();
-        conn.execute("DELETE FROM projects WHERE id = ?1", params![&project_id]).unwrap();
-        let path = PathBuf::from("projects").join(format!("{}.db", project_id));
-        if path.exists() { let _ = fs::remove_file(path); }
+        // 1. Check if it's the active project and clear it if so
+        {
+            let mut active_id_guard = data.active_project_id.lock().unwrap();
+            if active_id_guard.as_ref() == Some(&project_id) {
+                println!("[BACKEND] Deleting active project, clearing session...");
+                *active_id_guard = None;
+                let mut db_guard = data.project_db.lock().unwrap();
+                *db_guard = None; // Drop the connection
+                
+                // Clear from system_db last_id as well
+                let system = data.system_db.lock().unwrap();
+                let _ = system.execute("DELETE FROM system_data WHERE key = 'last_project_id'", []);
+            }
+        }
+
+        // 2. Delete from projects.db
+        {
+            let conn = data.global_db.lock().unwrap();
+            conn.execute("DELETE FROM projects WHERE id = ?1", params![&project_id]).unwrap();
+        }
+
+        let project_dir = PathBuf::from("projects").join(&project_id);
+        if project_dir.exists() {
+            println!("[BACKEND] Removing project directory: {:?}", project_dir);
+            let _ = fs::remove_dir_all(project_dir);
+        }
+        true
     }).await;
     match res { Ok(_) => HttpResponse::Ok().finish(), Err(_) => HttpResponse::InternalServerError().finish() }
+}
+
+fn purge_orphaned_projects(global_db: &Connection) {
+    println!("[BACKEND] Checking for orphaned project files/folders...");
+    let mut stmt = global_db.prepare("SELECT id FROM projects").unwrap();
+    let valid_ids: std::collections::HashSet<String> = stmt.query_map([], |row| row.get(0)).unwrap()
+        .map(|x| x.unwrap()).collect();
+
+    if let Ok(entries) = fs::read_dir("projects") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(dir_name) = path.file_name().and_then(|s| s.to_str()) {
+                    if !valid_ids.contains(dir_name) {
+                        println!("[BACKEND] Purging orphaned project folder: {:?}", path);
+                        let _ = fs::remove_dir_all(&path);
+                    }
+                }
+            } else if path.extension().and_then(|s| s.to_str()) == Some("db") {
+                if let Some(file_name) = path.file_stem().and_then(|s| s.to_str()) {
+                    if !valid_ids.contains(file_name) {
+                        println!("[BACKEND] Purging legacy database file: {:?}", path);
+                        let _ = fs::remove_file(&path);
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[post("/api/projects/{id}/load")]
@@ -150,19 +242,45 @@ async fn get_kv(data: web::Data<AppState>, key: web::Path<String>) -> impl Respo
         let res: Result<String, _> = conn.query_row("SELECT value FROM kv_store WHERE key = ?1", params![key_str], |row| row.get(0));
         res.ok()
     }).await;
-    match res { Ok(Some(val)) => HttpResponse::Ok().content_type("application/json").body(val), Ok(None) => HttpResponse::NotFound().finish(), Err(_) => HttpResponse::InternalServerError().finish() }
+    match res { 
+        Ok(Some(val)) => HttpResponse::Ok().content_type("application/json").body(val), 
+        Ok(None) => HttpResponse::NotFound().finish(), 
+        Err(e) => {
+            println!("[BACKEND ERROR] get_kv block error: {}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
 }
 
 #[post("/api/kv/{key}")]
 async fn save_kv(data: web::Data<AppState>, key: web::Path<String>, body: String) -> impl Responder {
     let key_str = key.into_inner();
+    let content_len = body.len();
     let res = web::block(move || {
         let db_guard = data.project_db.lock().unwrap();
-        let conn = match &*db_guard { Some(c) => c, None => return false };
-        conn.execute("INSERT OR REPLACE INTO kv_store (key, value) VALUES (?1, ?2)", params![key_str, body]).unwrap();
-        true
+        let conn = match &*db_guard { 
+            Some(c) => c, 
+            None => {
+                // Silent return when no project is loaded
+                return false; 
+            }
+        };
+        match conn.execute("INSERT OR REPLACE INTO kv_store (key, value) VALUES (?1, ?2)", params![key_str, body]) {
+            Ok(_) => true,
+            Err(e) => {
+                println!("[BACKEND ERROR] DB Execute failed in save_kv (key: {}, len: {}): {}", key_str, content_len, e);
+                false
+            }
+        }
     }).await;
-    match res { Ok(true) => HttpResponse::Ok().finish(), Ok(false) => HttpResponse::BadRequest().body("No active project"), Err(_) => HttpResponse::InternalServerError().finish() }
+    match res { 
+        Ok(true) => HttpResponse::Ok().finish(), 
+        Ok(false) => HttpResponse::BadRequest().body("No active project"), // This is handled silently by frontend
+        Err(e) => {
+            println!("[BACKEND ERROR] save_kv block error: {}", e);
+            HttpResponse::InternalServerError().finish() 
+        }
+    }
 }
 
 #[get("/api/assets")]
@@ -213,6 +331,30 @@ async fn list_files(web::Query(params): web::Query<ListParams>) -> impl Responde
 
 #[derive(Deserialize)]
 struct ImportRequest { path: String, overwrite: Option<bool> }
+
+#[derive(Deserialize)]
+struct DeleteFileRequest { path: String }
+
+#[post("/api/fs/delete")]
+async fn delete_fs_file(req: web::Json<DeleteFileRequest>) -> impl Responder {
+    let path = PathBuf::from(&req.path);
+    println!("[BACKEND] Request to delete file: {:?}", path);
+    
+    // Safety: Only allow deleting files in known asset areas or USB drives
+    // For now, we trust the path but could add more guards.
+    let res = web::block(move || {
+        if path.is_dir() {
+            fs::remove_dir_all(&path)
+        } else {
+            fs::remove_file(&path)
+        }
+    }).await;
+
+    match res {
+        Ok(Ok(_)) => HttpResponse::Ok().finish(),
+        _ => HttpResponse::InternalServerError().finish()
+    }
+}
 
 #[get("/api/drives")]
 async fn get_drives() -> impl Responder {
@@ -317,23 +459,48 @@ async fn delete_asset(data: web::Data<AppState>, id: web::Path<String>) -> impl 
 }
 
 fn init_project_db(id: &str) -> Result<Connection, rusqlite::Error> {
-    let path = PathBuf::from("projects").join(format!("{}.db", id));
-    let conn = Connection::open(path)?;
+    let dir_path = PathBuf::from("projects").join(id);
+    let _ = fs::create_dir_all(&dir_path);
+    let path = dir_path.join("project.db");
+    
+    println!("[DB] Opening project database at: {:?}", path);
+    
+    let conn = Connection::open_with_flags(
+        &path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | 
+        rusqlite::OpenFlags::SQLITE_OPEN_CREATE | 
+        rusqlite::OpenFlags::SQLITE_OPEN_FULL_MUTEX
+    )?;
+
+    conn.busy_timeout(std::time::Duration::from_millis(5000))?;
+    
+    // Attempt to enable WAL mode, but don't fail if it returns an error (e.g. if already open)
+    match conn.query_row("PRAGMA journal_mode=WAL", [], |r| r.get::<_, String>(0)) {
+        Ok(mode) => println!("[DB] Project {} journal mode: {}", id, mode),
+        Err(e) => println!("[DB WARNING] Could not set WAL mode for {}: {}", id, e),
+    }
+
     conn.execute("CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT)", [])?;
     conn.execute("CREATE TABLE IF NOT EXISTS assets (id TEXT PRIMARY KEY, name TEXT, mime_type TEXT)", [])?;
+    
     Ok(conn)
 }
 
 fn load_project_internal(data: &AppState, id: &str) -> bool {
+    println!("[BACKEND] Attempting to load project: {}", id);
     if let Ok(conn) = init_project_db(id) {
         let mut db_guard = data.project_db.lock().unwrap();
         *db_guard = Some(conn);
         let mut id_guard = data.active_project_id.lock().unwrap();
         *id_guard = Some(id.to_string());
-        let global = data.global_db.lock().unwrap();
-        let _ = global.execute("INSERT OR REPLACE INTO system_data (key, value) VALUES ('last_project_id', ?1)", params![id]);
+        let system = data.system_db.lock().unwrap();
+        let _ = system.execute("INSERT OR REPLACE INTO system_data (key, value) VALUES ('last_project_id', ?1)", params![id]);
+        println!("[BACKEND] Project {} loaded successfully", id);
         true
-    } else { false }
+    } else { 
+        println!("[BACKEND ERROR] Failed to initialize project DB for {}", id);
+        false 
+    }
 }
 
 // --- MAIN RUNTIME ---
@@ -346,29 +513,51 @@ fn main() {
         sys.block_on(async {
             let _ = fs::create_dir_all("assets");
             let _ = fs::create_dir_all("projects");
-            let conn = Connection::open("emap.db").expect("DB error");
-            conn.execute("CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT, created_at TEXT)", []).unwrap();
-            conn.execute("CREATE TABLE IF NOT EXISTS system_data (key TEXT PRIMARY KEY, value TEXT)", []).unwrap();
+            let _ = fs::create_dir_all("system_data");
+            
+            // System DB for global configuration (monitors, etc)
+            let system_conn = Connection::open_with_flags(
+                "system_data/system.db",
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | 
+                rusqlite::OpenFlags::SQLITE_OPEN_CREATE | 
+                rusqlite::OpenFlags::SQLITE_OPEN_FULL_MUTEX
+            ).expect("System DB error");
+            system_conn.busy_timeout(std::time::Duration::from_millis(5000)).unwrap();
+            let _ = system_conn.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(()));
+            system_conn.execute("CREATE TABLE IF NOT EXISTS system_data (key TEXT PRIMARY KEY, value TEXT)", []).unwrap();
+            
+            // Global DB for project management
+            let global_conn = Connection::open_with_flags(
+                "system_data/projects.db",
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | 
+                rusqlite::OpenFlags::SQLITE_OPEN_CREATE | 
+                rusqlite::OpenFlags::SQLITE_OPEN_FULL_MUTEX
+            ).expect("Projects DB error");
+            global_conn.busy_timeout(std::time::Duration::from_millis(5000)).unwrap();
+            let _ = global_conn.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(()));
+            global_conn.execute("CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT, created_at TEXT)", []).unwrap();
+            
+            // Clean up old files
+            purge_orphaned_projects(&global_conn);
             
             let app_state = web::Data::new(AppState {
-                global_db: Mutex::new(conn), project_db: Mutex::new(None), active_project_id: Mutex::new(None),
+                global_db: Mutex::new(global_conn), 
+                system_db: Mutex::new(system_conn),
+                project_db: Mutex::new(None), 
+                active_project_id: Mutex::new(None),
             });
 
-            let last_id = {
-                let global = app_state.global_db.lock().unwrap();
-                global.query_row("SELECT value FROM system_data WHERE key = 'last_project_id'", [], |r| r.get::<_, String>(0)).ok()
-            };
-            if let Some(id) = last_id { load_project_internal(&app_state, &id); }
+            // Removed automatic loading of last_id to force user to pick a project every time.
 
             let server = HttpServer::new(move || {
                 App::new()
                     .app_data(web::PayloadConfig::new(10 * 1024 * 1024 * 1024))
                     .app_data(app_state.clone())
                     .service(index).service(dashboard).service(projection)
-                    .service(get_monitors).service(save_monitor_config).service(list_projects).service(delete_project).service(create_project)
+                    .service(get_monitors).service(save_monitor_config).service(get_monitor_config).service(reset_monitor_config).service(list_projects).service(delete_project).service(create_project)
                     .service(load_project).service(get_active_project).service(get_kv).service(save_kv).service(list_assets)
                     .service(list_files).service(import_asset).service(save_asset).service(get_asset).service(delete_asset)
-                    .service(get_drives)
+                    .service(get_drives).service(delete_fs_file)
                     .service(Files::new("/", "./ui/dist").index_file("index.html"))
             })
             .bind(("0.0.0.0", 8080)).unwrap();
@@ -396,6 +585,14 @@ fn main() {
     let _ = server_rx.recv();
     println!("Server started, launching Qt window...");
 
+    // Print detected monitors from Rust perspective too
+    if let Ok(monitors) = DisplayInfo::all() {
+        println!("Rust detected {} monitors:", monitors.len());
+        for (i, m) in monitors.iter().enumerate() {
+            println!("  {}: {}x{} at ({},{}) primary={}", i, m.width, m.height, m.x, m.y, m.is_primary);
+        }
+    }
+
     let mut engine = QmlEngine::new();
     
     // Initialize WebEngine
@@ -403,24 +600,68 @@ fn main() {
         import QtQuick
         import QtQuick.Window
         import QtWebEngine
+        import QtQml
 
-        Window {
-            visible: true
-            visibility: Window.FullScreen
-            title: "Emap Projection System"
-            WebEngineView {
-                anchors.fill: parent
-                url: "http://127.0.0.1:8080"
-                settings.pluginsEnabled: true
-                settings.playbackRequiresUserGesture: false
-                settings.javascriptCanAccessClipboard: true
-                settings.accelerated2dCanvasEnabled: true
-                settings.webGLEnabled: true
-                onFullScreenRequested: function(request) {
-                    request.accept()
+        Item {
+            id: root
+            
+            Component.onCompleted: {
+                console.log("QML: Starting Emap Projection System");
+                console.log("QML: Detected " + Qt.application.screens.length + " screens");
+                for (var i = 0; i < Qt.application.screens.length; i++) {
+                    console.log("QML: Screen " + i + ": " + Qt.application.screens[i].name + 
+                                " (" + Qt.application.screens[i].width + "x" + Qt.application.screens[i].height + ")");
                 }
-                onContextMenuRequested: function(request) {
-                    request.accepted = true // This disables the menu
+            }
+
+            Instantiator {
+                model: Qt.application.screens
+                delegate: Window {
+                    id: win
+                    visible: true
+                    
+                    // Explicitly set coordinates to help the compositor (especially on Wayland/Hyprland)
+                    x: modelData.virtualX
+                    y: modelData.virtualY
+                    width: modelData.width
+                    height: modelData.height
+                    
+                    visibility: Window.FullScreen
+                    screen: modelData
+                    title: "Emap - " + modelData.name
+                    color: "black"
+
+                    Component.onCompleted: {
+                        console.log("QML: Created window for " + modelData.name + 
+                                    " at " + x + "," + y + " (" + width + "x" + height + ")");
+                    }
+
+                    WebEngineView {
+                        anchors.fill: parent
+                        // Pass the screen name to the backend so it can decide what to serve
+                        url: "http://127.0.0.1:8080/?screen=" + encodeURIComponent(modelData.name)
+                        
+                        settings.pluginsEnabled: true
+                        settings.playbackRequiresUserGesture: false
+                        settings.javascriptCanAccessClipboard: true
+                        settings.accelerated2dCanvasEnabled: true
+                        settings.webGLEnabled: true
+                        
+                        onLoadingChanged: function(loadRequest) {
+                            if (loadRequest.status === WebEngineView.LoadFailedStatus) {
+                                console.error("QML: Load failed for " + loadRequest.url + " : " + loadRequest.errorString);
+                            } else if (loadRequest.status === WebEngineView.LoadSucceededStatus) {
+                                console.log("QML: Load succeeded for " + loadRequest.url);
+                            }
+                        }
+
+                        onFullScreenRequested: function(request) {
+                            request.accept()
+                        }
+                        onContextMenuRequested: function(request) {
+                            request.accepted = true // This disables the menu
+                        }
+                    }
                 }
             }
         }
