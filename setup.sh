@@ -13,19 +13,20 @@ TEMP_BUILD_DIR="$INSTALL_DIR/build_tmp_$(date +%s)"
 echo "--- Emap Setup Start ---"
 
 # 1. Install System Dependencies
+# Fixed: Added backslashes to allow the command to span multiple lines
 echo "Checking and installing system dependencies..."
 sudo apt-get update
-sudo apt-get install -y 
-    build-essential 
-    pkg-config 
-    libssl-dev 
-    libsqlite3-dev 
-    qtbase5-dev 
-    qtdeclarative5-dev 
-    qtwebengine5-dev 
-    libxcb-xinerama0 
-    curl 
-    git 
+sudo apt-get install -y \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    libsqlite3-dev \
+    qtbase5-dev \
+    qtdeclarative5-dev \
+    qtwebengine5-dev \
+    libxcb-xinerama0 \
+    curl \
+    git \
     lsb-release
 
 # 2. Install Node.js (if not present)
@@ -39,10 +40,10 @@ fi
 if ! command -v cargo &> /dev/null; then
     echo "Installing Rust..."
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-    source $HOME/.cargo/env
+    source "$HOME/.cargo/env"
 else
     # Ensure cargo is in PATH for the current script
-    source $HOME/.cargo/env || true
+    source "$HOME/.cargo/env" || true
 fi
 
 # 4. Prepare Build Workspace
@@ -86,13 +87,7 @@ echo "Cleaning up source files..."
 cd "$INSTALL_DIR"
 rm -rf "$TEMP_BUILD_DIR"
 
-# Optional: if the script was run from inside a repo, and we want to "delete everything else"
-# as per user instruction, we should remove the current directory's source files
-# but keep the essentials.
-# CAUTION: This will delete files in the current directory.
-# Since the user asked to "delete everything else except the final compiled result", 
-# and the script is intended to be in the root, we'll perform a targetted cleanup.
-
+# Finalize minimal installation by removing source files but keeping essentials
 FILES_TO_KEEP=("$BINARY_NAME" "ui" "assets" "projects" "system_data" "setup.sh")
 
 echo "Finalizing minimal installation..."
