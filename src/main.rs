@@ -26,6 +26,7 @@ struct AppState {
     system_db: Mutex<Connection>,
     project_db: Mutex<Option<Connection>>,
     active_project_id: Mutex<Option<String>>,
+    discovered_monitors: Mutex<Vec<MonitorInfo>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -35,10 +36,13 @@ struct AssetMeta { id: String, name: String, mime_type: String }
 struct ProjectMeta { id: String, name: String, created_at: String }
 
 #[derive(Serialize, Deserialize, Default)]
-struct AppConfig { dashboard_screen_name: String }
+struct AppConfig { 
+    #[serde(default)]
+    dashboard_screen_name: String 
+}
 
-#[derive(Serialize)]
-struct MonitorInfo { id: u32, x: i32, y: i32, width: u32, height: u32, is_primary: bool }
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct MonitorInfo { id: u32, name: String, x: i32, y: i32, width: u32, height: u32, is_primary: bool }
 
 #[derive(Deserialize)]
 struct IndexQuery { screen: Option<String> }
@@ -74,12 +78,21 @@ async fn dashboard() -> impl Responder { NamedFile::open_async("./ui/dist/dashbo
 async fn projection() -> impl Responder { NamedFile::open_async("./ui/dist/projection.html").await }
 
 #[get("/api/monitors")]
-async fn get_monitors() -> impl Responder {
-    let monitors = DisplayInfo::all().unwrap_or_default();
-    let info: Vec<MonitorInfo> = monitors.into_iter().map(|m| MonitorInfo {
-        id: m.id, x: m.x, y: m.y, width: m.width, height: m.height, is_primary: m.is_primary,
-    }).collect();
-    HttpResponse::Ok().json(info)
+async fn get_monitors(data: web::Data<AppState>) -> impl Responder {
+    let monitors = data.discovered_monitors.lock().unwrap();
+    HttpResponse::Ok().json(monitors.clone())
+}
+
+#[post("/api/monitors/register")]
+async fn register_monitor(data: web::Data<AppState>, monitor: web::Json<MonitorInfo>) -> impl Responder {
+    let mut monitors = data.discovered_monitors.lock().unwrap();
+    let m = monitor.into_inner();
+    if let Some(existing) = monitors.iter_mut().find(|x| x.name == m.name) {
+        *existing = m;
+    } else {
+        monitors.push(m);
+    }
+    HttpResponse::Ok().finish()
 }
 
 #[post("/api/config/monitor")]
@@ -506,6 +519,9 @@ fn load_project_internal(data: &AppState, id: &str) -> bool {
 // --- MAIN RUNTIME ---
 
 fn main() {
+    // Force Wayland/X11 preference
+    std::env::set_var("QT_QPA_PLATFORM", "wayland;xcb");
+    
     let (server_tx, server_rx) = std::sync::mpsc::channel();
 
     thread::spawn(move || {
@@ -545,6 +561,7 @@ fn main() {
                 system_db: Mutex::new(system_conn),
                 project_db: Mutex::new(None), 
                 active_project_id: Mutex::new(None),
+                discovered_monitors: Mutex::new(Vec::new()),
             });
 
             // Removed automatic loading of last_id to force user to pick a project every time.
@@ -554,7 +571,7 @@ fn main() {
                     .app_data(web::PayloadConfig::new(10 * 1024 * 1024 * 1024))
                     .app_data(app_state.clone())
                     .service(index).service(dashboard).service(projection)
-                    .service(get_monitors).service(save_monitor_config).service(get_monitor_config).service(reset_monitor_config).service(list_projects).service(delete_project).service(create_project)
+                    .service(get_monitors).service(register_monitor).service(save_monitor_config).service(get_monitor_config).service(reset_monitor_config).service(list_projects).service(delete_project).service(create_project)
                     .service(load_project).service(get_active_project).service(get_kv).service(save_kv).service(list_assets)
                     .service(list_files).service(import_asset).service(save_asset).service(get_asset).service(delete_asset)
                     .service(get_drives).service(delete_fs_file)
@@ -609,8 +626,23 @@ fn main() {
                 console.log("QML: Starting Emap Projection System");
                 console.log("QML: Detected " + Qt.application.screens.length + " screens");
                 for (var i = 0; i < Qt.application.screens.length; i++) {
-                    console.log("QML: Screen " + i + ": " + Qt.application.screens[i].name + 
-                                " (" + Qt.application.screens[i].width + "x" + Qt.application.screens[i].height + ")");
+                    var s = Qt.application.screens[i];
+                    console.log("QML: Screen " + i + ": " + s.name + 
+                                " (" + s.width + "x" + s.height + ")");
+                    
+                    // Register with backend
+                    var xhr = new XMLHttpRequest();
+                    xhr.open("POST", "http://127.0.0.1:8080/api/monitors/register", true);
+                    xhr.setRequestHeader("Content-Type", "application/json");
+                    xhr.send(JSON.stringify({
+                        id: i,
+                        name: s.name,
+                        x: s.virtualX,
+                        y: s.virtualY,
+                        width: s.width,
+                        height: s.height,
+                        is_primary: (i === 0)
+                    }));
                 }
             }
 

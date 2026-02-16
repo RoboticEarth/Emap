@@ -9,28 +9,31 @@ function Setup() {
 
     useEffect(() => {
         loadMonitors();
+        const interval = setInterval(loadMonitors, 2000);
+        return () => clearInterval(interval);
     }, []);
 
     async function loadMonitors() {
-        setLoading(true);
         try {
             const res = await fetch('/api/monitors');
             const data = await res.json();
             setMonitors(data);
+            setLoading(false);
         } catch (e) {
             setError('Failed to load monitors');
+            setLoading(false);
         }
-        setLoading(false);
     }
 
-    async function selectMonitor(id) {
+    async function selectMonitor(name) {
         try {
             await fetch('/api/config/monitor', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ control_panel_monitor_id: id })
+                body: JSON.stringify({ dashboard_screen_name: name })
             });
-            alert("Control Panel Monitor Saved!");
+            alert("Control Panel Monitor Saved! The application will now use this monitor for the dashboard.");
+            window.location.reload();
         } catch (e) {
             alert("Failed to save monitor selection.");
         }
@@ -43,20 +46,26 @@ function Setup() {
             <p className="text-gray-400">Select the monitor you want to be your Control Panel.</p>
             
             <div id="monitor-list" className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {loading && <div className="animate-pulse text-gray-500 text-center col-span-2">Detecting monitors...</div>}
+                {loading && monitors.length === 0 && <div className="animate-pulse text-gray-500 text-center col-span-2">Detecting monitors...</div>}
                 {error && <div className="text-red-500 text-center col-span-2">{error}</div>}
-                {!loading && !error && monitors.map((m, index) => (
+                {monitors.length === 0 && !loading && <div className="text-gray-500 text-center col-span-2">No monitors detected yet. Ensure the Qt window is open.</div>}
+                {monitors.map((m, index) => (
                     <button 
-                        key={m.id || index}
-                        onClick={() => selectMonitor(m.id)}
+                        key={m.name || index}
+                        onClick={() => selectMonitor(m.name)}
                         className="px-6 py-4 bg-zinc-800 hover:bg-blue-600 border border-zinc-700 rounded-xl transition-all flex flex-col items-center min-w-[200px] group"
                     >
-                        <span className="text-lg font-bold group-hover:text-white">Monitor {index + 1}</span>
+                        <span className="text-lg font-bold group-hover:text-white">{m.name || `Monitor ${index + 1}`}</span>
                         <span className="text-xs text-gray-400 mt-1">{m.width}x{m.height} at {m.x},{m.y}</span>
-                        <span className="text-[10px] text-gray-500 font-mono mt-2">ID: {m.id}</span>
                     </button>
                 ))}
             </div>
+            <button 
+                onClick={() => fetch('/api/config/reset', { method: 'POST' }).then(() => window.location.reload())}
+                className="text-xs text-gray-500 hover:text-red-500 transition-colors"
+            >
+                Reset Configuration
+            </button>
         </div>
     );
 }
