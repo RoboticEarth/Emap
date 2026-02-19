@@ -11,6 +11,7 @@ use std::thread;
 use futures_util::StreamExt;
 use std::io::Write;
 use qmetaobject::prelude::*;
+use qmetaobject::{QmlComponent, ComponentStatus};
 use std::net::UdpSocket;
 
 fn get_local_ip() -> Option<String> {
@@ -611,21 +612,31 @@ fn main() {
     }
 
     let mut engine = QmlEngine::new();
+
+    // Detect Qt version at runtime to use correct imports
+    let (qml_imports, webengine_import) = {
+        let mut component = QmlComponent::new(&engine);
+        // Try versionless import (Qt 6)
+        component.set_data("import QtQuick; Item {}".into());
+        if component.status() == ComponentStatus::Ready {
+            ("import QtQuick\nimport QtQuick.Window\nimport QtQml", "import QtWebEngine")
+        } else {
+            ("import QtQuick 2.15\nimport QtQuick.Window 2.15\nimport QtQml 2.15", "import QtWebEngine 1.10")
+        }
+    };
     
     // Initialize WebEngine
-    engine.load_data(r#"
-        import QtQuick
-        import QtQuick.Window
-        import QtWebEngine
-        import QtQml
+    let qml_code = format!(r#"
+        {}
+        {}
 
-        Item {
+        Item {{
             id: root
             
-            Component.onCompleted: {
+            Component.onCompleted: {{
                 console.log("QML: Starting Emap Projection System");
                 console.log("QML: Detected " + Qt.application.screens.length + " screens");
-                for (var i = 0; i < Qt.application.screens.length; i++) {
+                for (var i = 0; i < Qt.application.screens.length; i++) {{
                     var s = Qt.application.screens[i];
                     console.log("QML: Screen " + i + ": " + s.name + 
                                 " (" + s.width + "x" + s.height + ")");
@@ -634,7 +645,7 @@ fn main() {
                     var xhr = new XMLHttpRequest();
                     xhr.open("POST", "http://127.0.0.1:8080/api/monitors/register", true);
                     xhr.setRequestHeader("Content-Type", "application/json");
-                    xhr.send(JSON.stringify({
+                    xhr.send(JSON.stringify({{
                         id: i,
                         name: s.name,
                         x: s.virtualX,
@@ -642,13 +653,13 @@ fn main() {
                         width: s.width,
                         height: s.height,
                         is_primary: (i === 0)
-                    }));
-                }
-            }
+                    }}));
+                }}
+            }}
 
-            Instantiator {
+            Instantiator {{
                 model: Qt.application.screens
-                delegate: Window {
+                delegate: Window {{
                     id: win
                     visible: true
                     
@@ -663,12 +674,12 @@ fn main() {
                     title: "Emap - " + modelData.name
                     color: "black"
 
-                    Component.onCompleted: {
+                    Component.onCompleted: {{
                         console.log("QML: Created window for " + modelData.name + 
                                     " at " + x + "," + y + " (" + width + "x" + height + ")");
-                    }
+                    }}
 
-                    WebEngineView {
+                    WebEngineView {{
                         anchors.fill: parent
                         // Pass the screen name to the backend so it can decide what to serve
                         url: "http://127.0.0.1:8080/?screen=" + encodeURIComponent(modelData.name)
@@ -679,25 +690,27 @@ fn main() {
                         settings.accelerated2dCanvasEnabled: true
                         settings.webGLEnabled: true
                         
-                        onLoadingChanged: function(loadRequest) {
-                            if (loadRequest.status === WebEngineView.LoadFailedStatus) {
+                        onLoadingChanged: function(loadRequest) {{
+                            if (loadRequest.status === WebEngineView.LoadFailedStatus) {{
                                 console.error("QML: Load failed for " + loadRequest.url + " : " + loadRequest.errorString);
-                            } else if (loadRequest.status === WebEngineView.LoadSucceededStatus) {
+                            }} else if (loadRequest.status === WebEngineView.LoadSucceededStatus) {{
                                 console.log("QML: Load succeeded for " + loadRequest.url);
-                            }
-                        }
+                            }}
+                        }}
 
-                        onFullScreenRequested: function(request) {
+                        onFullScreenRequested: function(request) {{
                             request.accept()
-                        }
-                        onContextMenuRequested: function(request) {
+                        }}
+                        onContextMenuRequested: function(request) {{
                             request.accepted = true // This disables the menu
-                        }
-                    }
-                }
-            }
-        }
-    "#.into());
+                        }}
+                    }}
+                }}
+            }}
+        }}
+    "#, qml_imports, webengine_import);
+
+    engine.load_data(qml_code.into());
 
     engine.exec();
 }
