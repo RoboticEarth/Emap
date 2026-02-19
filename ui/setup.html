@@ -3,10 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark">
     <title>Setup - Select Control Panel</title>
     <style>
+        :root { color-scheme: dark; }
         body {
-            background-color: #121212;
+            background-color: #000000 !important;
             color: #e0e0e0;
             font-family: system-ui, -apple-system, sans-serif;
             display: flex;
@@ -16,17 +18,20 @@
             height: 100vh;
             margin: 0;
             text-align: center;
+            overflow: hidden;
         }
         .container {
-            background: #1e1e1e;
+            background: #121212;
             padding: 2rem 3rem;
             border-radius: 12px;
-            box-shadow: 0 8px 16px rgba(0,0,0,0.5);
+            border: 1px solid #27272a;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.8);
             display: flex;
             flex-direction: column;
             align-items: center;
             gap: 1.5rem;
             min-width: 320px;
+            z-index: 10;
         }
         h1 { margin: 0; font-size: 1.8rem; }
         h2 { margin: 0; color: #a0a0a0; font-weight: normal; font-size: 1.2rem; }
@@ -177,12 +182,12 @@
                 });
                 
                 if (response.ok) {
-                    btn.textContent = "Success! Loading...";
-                    // Reloading will cause the backend to serve index.html (the dashboard)
-                    // or projection.html for others.
+                    btn.textContent = "Configuration Saved! Synchronizing...";
+                    // Use a slightly longer delay to ensure backend has committed the DB transaction 
+                    // and allow other monitors to see the change before we redirect.
                     setTimeout(() => {
                         window.location.href = "/?screen=" + encodeURIComponent(screen);
-                    }, 500);
+                    }, 1500);
                 } else {
                     isRedirecting = false;
                     throw new Error("Failed to save");
@@ -207,11 +212,14 @@
                     if (config.dashboard_screen_name) {
                         isRedirecting = true;
                         showLoader();
-                        window.location.href = "/?screen=" + encodeURIComponent(screen);
+                        btn.textContent = "Control Panel Selected on another monitor...";
+                        setTimeout(() => {
+                            window.location.href = "/?screen=" + encodeURIComponent(screen);
+                        }, 1000);
                     }
                 }
             } catch (e) {}
-        }, 500);
+        }, 1000);
     </script>
 </body>
 </html>

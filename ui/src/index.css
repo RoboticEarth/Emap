@@ -2,12 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  color-scheme: dark !important;
+}
+
 body, html { 
     margin: 0; 
     padding: 0; 
-    background-color: black; 
+    background-color: black !important; 
     overflow: hidden; 
-    color: white; 
+    color: white !important; 
     height: 100%; 
     font-family: 'Inter', sans-serif; 
 }
@@ -22,6 +26,29 @@ body, html {
     -webkit-user-select: none; 
 }
 
+/* 
+   Base styles for form elements to prevent "Browser Light Mode" defaults.
+   We don't use !important here so that Tailwind classes (bg-blue-600, etc.) 
+   can still override the background color.
+*/
+button, input, select, textarea {
+    background-color: #27272a; /* zinc-800 */
+    color: white;
+    border: 1px solid #3f3f46; /* zinc-700 */
+    border-radius: 0.375rem;
+    color-scheme: dark !important;
+}
+
+/* Specific fix for inputs to ensure they never turn white */
+input {
+    background-color: #09090b !important;
+}
+
+/* Ensure buttons with explicit tailwind colors keep them */
+button[class*="bg-"] {
+    border: none;
+}
+
 input[type=number]::-webkit-inner-spin-button, 
 input[type=number]::-webkit-outer-spin-button { 
     -webkit-appearance: none; 
@@ -29,16 +56,21 @@ input[type=number]::-webkit-outer-spin-button {
 }
 
 ::-webkit-scrollbar { 
-    width: 6px; 
+    width: 10px; 
 }
 
 ::-webkit-scrollbar-track { 
-    background: #18181b; 
+    background: #09090b; 
 }
 
 ::-webkit-scrollbar-thumb { 
-    background: #3f3f46; 
-    border-radius: 3px; 
+    background: #27272a; 
+    border: 2px solid #09090b;
+    border-radius: 5px; 
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #3f3f46;
 }
 
 .animate-scale { 
@@ -56,7 +88,7 @@ input[type=number]::-webkit-outer-spin-button {
 
 /* Node Grid */
 .node-grid {
-    background-image: radial-gradient(#666 1px, transparent 1px);
+    background-image: radial-gradient(rgba(255,255,255,0.1) 1px, transparent 1px);
     background-size: 20px 20px;
 }
 
@@ -76,17 +108,31 @@ iframe {
     pointer-events: none;
 }
 
-/* Phase 4: GPU Layer Sync Fix */
+/* GPU Layer Sync Fix */
 canvas {
     transform: translateZ(0);
     backface-visibility: hidden;
 }
 
+@keyframes bounce-subtle { 
+    0%, 100% { transform: translateY(0); } 
+    50% { transform: translateY(-4px); } 
+}
+.animate-bounce-subtle { animation: bounce-subtle 2s infinite ease-in-out; }
+
 @keyframes shimmer { 
-  @keyframes bounce-subtle { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
-  .animate-bounce-subtle { animation: bounce-subtle 2s infinite ease-in-out; }
     0% { transform: translateX(-200%); } 
     100% { transform: translateX(400%); } 
+}
+
+@keyframes progress {
+    0% { transform: translateX(-100%); }
+    50% { transform: translateX(0%); }
+    100% { transform: translateX(100%); }
+}
+
+.animate-progress {
+    animation: progress 2s infinite ease-in-out;
 }
 
 .animate-shimmer { 

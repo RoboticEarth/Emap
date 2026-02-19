@@ -450,12 +450,23 @@ const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, initi
 };
 
 const LoadingScreen = () => (
-    <div className="fixed inset-0 z-[9999] bg-black flex flex-col items-center justify-center">
-        <div className="relative w-64">
-            <img src="/robotic T M.png" alt="Logo" className="w-full relative z-10" />
-            <div className="absolute inset-0 z-20 bg-gradient-to-r from-transparent via-white/50 to-transparent w-1/2 h-full -skew-x-12 blur-md animate-shimmer" style={{mixBlendMode: 'overlay'}}></div>
+    <div className="fixed inset-0 z-[9999] bg-black flex flex-col items-center justify-center overflow-hidden">
+        <div className="relative group">
+            {/* Ambient background glow */}
+            <div className="absolute -inset-20 bg-blue-600/10 rounded-full blur-[100px] animate-pulse"></div>
+            
+            <div className="relative w-80 mb-12">
+                <img src="/robotic T M.png" alt="Logo" className="w-full relative z-10 filter drop-shadow-2xl" />
+                <div className="absolute inset-0 z-20 bg-gradient-to-r from-transparent via-white/20 to-transparent w-full h-full -skew-x-12 blur-sm animate-shimmer" style={{mixBlendMode: 'overlay'}}></div>
+            </div>
         </div>
-        <div className="mt-8 text-white font-bold tracking-[0.2em] text-5xl animate-pulse">LOADING SYSTEM</div>
+        
+        <div className="flex flex-col items-center gap-4">
+            <div className="text-[10px] font-bold tracking-[0.5em] text-blue-500 uppercase animate-pulse">Initializing Interface</div>
+            <div className="w-48 h-[1px] bg-zinc-800 relative overflow-hidden">
+                <div className="absolute inset-0 bg-blue-500 animate-progress"></div>
+            </div>
+        </div>
     </div>
 );
 
@@ -1546,6 +1557,40 @@ const Modal = ({ isOpen, title, message, onConfirm, onCancel, type = 'confirm' }
     );
 };
 
+const TabSlider = ({ activeTab, onTabChange }) => {
+    const isConfig = activeTab === 'config';
+    return (
+        <div className="relative bg-zinc-900/80 rounded-lg border border-zinc-800 flex mb-6 mx-4 overflow-hidden h-10 group">
+            {/* Center Divider */}
+            <div className="absolute left-1/2 top-2 bottom-2 w-[1px] bg-zinc-800 z-0" />
+            
+            {/* Sliding Bottom Indicator */}
+            <div 
+                className={`absolute bottom-0 h-[2px] transition-all duration-500 ease-in-out z-20 shadow-[0_0_10px_rgba(0,0,0,0.5)]`}
+                style={{ 
+                    left: isConfig ? '0%' : '50%', 
+                    width: '50%',
+                    backgroundColor: isConfig ? '#84cc16' : '#a855f7',
+                    boxShadow: `0 0 12px ${isConfig ? 'rgba(132,204,22,0.4)' : 'rgba(168,85,247,0.4)'}`
+                }}
+            />
+
+            <button 
+                onClick={() => onTabChange('config')}
+                className={`relative z-10 flex-1 text-[10px] font-bold uppercase tracking-[0.2em] transition-all duration-300 flex items-center justify-center gap-2 ${isConfig ? 'text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+            >
+                <Grid3X3 size={12} className={isConfig ? "text-lime-500" : ""} /> Geometry
+            </button>
+            <button 
+                onClick={() => onTabChange('scenes')}
+                className={`relative z-10 flex-1 text-[10px] font-bold uppercase tracking-[0.2em] transition-all duration-300 flex items-center justify-center gap-2 ${!isConfig ? 'text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+            >
+                <Film size={12} className={!isConfig ? "text-purple-500" : ""} /> Scenes
+            </button>
+        </div>
+    );
+};
+
 export default function App() {
     const [modal, setModal] = useState({ isOpen: false, title: '', message: '', onConfirm: null, type: 'confirm' });
     const showConfirm = (title, message, onConfirm) => setModal({ isOpen: true, title, message, onConfirm: () => { onConfirm(); setModal(prev => ({ ...prev, isOpen: false })); }, type: 'confirm' });
@@ -1615,6 +1660,21 @@ export default function App() {
         console.log("[APP] Syncing UI state...");
         db.saveState('ui_sync_state', { viewMode, menuTab, showGuides, activeWallId });
     }, [viewMode, menuTab, showGuides, activeWallId, isLoading]);
+
+    // Monitor for config reset
+    useEffect(() => {
+        const checkConfig = async () => {
+            try {
+                const res = await fetch('/api/config/monitor');
+                if (!res.ok) {
+                    console.log("[APP] Monitor configuration reset detected, redirecting...");
+                    window.location.reload();
+                }
+            } catch (e) {}
+        };
+        const interval = setInterval(checkConfig, 2000);
+        return () => clearInterval(interval);
+    }, []);
 
     useEffect(() => {
         if (prevMenuTabRef.current !== 'scenes' && menuTab === 'scenes') {
@@ -1988,17 +2048,20 @@ export default function App() {
             </div>
 
             {menuTab === 'scenes' && viewMode !== 'live' && showNodeEditor && (
-                <div className="absolute bottom-0 left-0 right-0 h-[45%] z-30 border-t border-zinc-700/30 bg-zinc-900/50 backdrop-blur-md">
+                <div 
+                    className={`absolute bottom-0 left-0 h-[45%] z-30 border-t border-zinc-800 bg-zinc-950/80 backdrop-blur-xl transition-all duration-500 ease-in-out`}
+                    style={{ right: menuOpen ? '256px' : '0px' }}
+                >
                     {!activeSelection.cueId ? (
-                        <div className="w-full h-full flex items-center justify-center backdrop-blur-sm bg-black/20">
+                        <div className="w-full h-full flex items-center justify-center bg-black/20">
                             <div className="text-center bg-zinc-900/80 p-8 rounded-2xl border border-zinc-800 shadow-2xl">
                                 <Workflow size={48} className="text-purple-500 mx-auto mb-4 opacity-50" />
-                                <p className="text-gray-400 font-bold mb-2 uppercase tracking-widest">No Cue Selected</p>
-                                <p className="text-xs text-gray-500 max-w-[200px] mx-auto mb-4">Please create or select an Act and a Cue in the sidebar to start mapping nodes.</p>
+                                <p className="text-zinc-400 font-bold mb-2 uppercase tracking-[0.2em] text-[10px]">No Cue Selected</p>
+                                <p className="text-[10px] text-zinc-500 max-w-[200px] mx-auto mb-4">Please create or select an Act and a Cue in the sidebar to start mapping nodes.</p>
                                 {scenes.length === 0 ? (
-                                    <button onClick={addScene} className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded font-bold text-xs uppercase tracking-widest transition-all active:scale-95 shadow-lg shadow-purple-900/40">Create First Act</button>
+                                    <button onClick={addScene} className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded font-bold text-[10px] uppercase tracking-widest transition-all active:scale-95 shadow-lg shadow-purple-900/40">Create First Act</button>
                                 ) : (
-                                    <button onClick={() => addCue(scenes[0].id)} className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded font-bold text-xs uppercase tracking-widest transition-all active:scale-95 shadow-lg shadow-purple-900/40">Add Cue to {scenes[0].name}</button>
+                                    <button onClick={() => addCue(scenes[0].id)} className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded font-bold text-[10px] uppercase tracking-widest transition-all active:scale-95 shadow-lg shadow-purple-900/40">Add Cue to {scenes[0].name}</button>
                                 )}
                             </div>
                         </div>
@@ -2011,137 +2074,154 @@ export default function App() {
             )}
 
             {menuOpen && viewMode !== 'live' && (
-                <div className="absolute right-4 top-4 bottom-4 w-64 bg-zinc-900/95 backdrop-blur border border-zinc-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
-                    <div className="p-4 pb-0">
+                <div className="absolute right-4 top-4 bottom-4 w-64 bg-zinc-900/90 backdrop-blur-xl border border-zinc-800 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden transition-all duration-500 animate-scale">
+                    {/* Dynamic Hue Background */}
+                    <div 
+                        className="absolute top-0 right-0 bottom-0 w-32 opacity-20 pointer-events-none transition-all duration-1000 ease-in-out blur-[80px]"
+                        style={{ 
+                            background: `linear-gradient(to right, transparent, ${menuTab === 'config' ? '#84cc16' : '#a855f7'})`,
+                            transform: 'translateX(20%)'
+                        }}
+                    />
+
+                    <div className="p-4 pb-0 relative z-10">
                         <button 
                             onClick={() => {
                                 setViewMode('live');
                                 setMenuOpen(false);
                             }}
-                            className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-lg shadow-lg flex items-center justify-center gap-2 transition-transform hover:scale-105"
+                            className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-lg shadow-lg flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-95"
                         >
                             <Play size={20} fill="currentColor" /> GO LIVE
                         </button>
                     </div>
-                    <div className="p-4 border-b border-zinc-700 flex justify-between items-center bg-zinc-900">
-                        <span className="font-bold flex items-center gap-2"> <Settings size={18} /> Configuration </span>
-                        <button onClick={() => setMenuOpen(false)} className="text-gray-400 hover:text-white">&times;</button>
-                    </div>
-                    <div className="flex border-b border-zinc-800 mt-4">
-                        <button onClick={() => setMenuTab('config')} className={`flex-1 py-2 text-xs font-bold ${menuTab === 'config' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-500 hover:text-gray-300'}`}>Geometry</button>
-                        <button onClick={() => setMenuTab('scenes')} className={`flex-1 py-2 text-xs font-bold ${menuTab === 'scenes' ? 'text-purple-400 border-b-2 border-purple-400' : 'text-gray-500 hover:text-gray-300'}`}>Scenes</button>
+                    <div className="p-4 border-b border-zinc-800/50 flex justify-between items-center bg-zinc-900/50 relative z-10">
+                        <span className="font-bold text-[10px] tracking-[0.2em] uppercase text-zinc-500 flex items-center gap-2"> <Settings size={14} /> Control Panel </span>
+                        <button onClick={() => setMenuOpen(false)} className="text-zinc-600 hover:text-white transition-colors">&times;</button>
                     </div>
 
-                    <div className="flex-1 overflow-y-auto p-4 space-y-6">
+                    <div className="mt-4 relative z-10">
+                        <TabSlider activeTab={menuTab} onTabChange={setMenuTab} />
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto p-4 space-y-6 relative z-10">
                         {menuTab === 'config' && (
-                            <>
-                                {viewMode === '2d' && (<div className="grid grid-cols-2 gap-2"><button onClick={() => setMoveMode(p => !p)} className={`p-2 rounded text-xs flex items-center justify-center gap-1 border transition-colors ${moveMode ? 'bg-orange-600 border-orange-400 text-white' : 'bg-zinc-800 border-zinc-700 text-gray-300'}`}> <Move size={14} /> Move (M) </button><button onClick={() => setShowGuides(p => !p)} className={`p-2 rounded text-xs flex items-center justify-center gap-1 border transition-colors ${showGuides ? 'bg-blue-900/50 border-blue-500 text-blue-200' : 'bg-zinc-800 border-zinc-700 text-gray-300'}`}> <Grid3X3 size={14} /> Guide (G) </button></div>)}
+                            <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+                                {viewMode === '2d' && (<div className="grid grid-cols-2 gap-2"><button onClick={() => setMoveMode(p => !p)} className={`p-2 rounded-lg text-[10px] uppercase font-bold tracking-wider flex items-center justify-center gap-1 border transition-all ${moveMode ? 'bg-orange-600 border-orange-400 text-white shadow-lg shadow-orange-900/40' : 'bg-zinc-800/50 border-zinc-700 text-zinc-400'}`}> <Move size={14} /> Move </button><button onClick={() => setShowGuides(p => !p)} className={`p-2 rounded-lg text-[10px] uppercase font-bold tracking-wider flex items-center justify-center gap-1 border transition-all ${showGuides ? 'bg-blue-900/50 border-blue-500 text-blue-200 shadow-lg shadow-blue-900/40' : 'bg-zinc-800/50 border-zinc-700 text-zinc-400'}`}> <Grid3X3 size={14} /> Guide </button></div>)}
                                 {activeWall && (
-                                    <div className="space-y-3 bg-zinc-900 border border-zinc-700 p-3 rounded-lg">
-                                        <div className="flex items-center gap-2 mb-2 pb-2 border-b border-zinc-800">
-                                            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: activeWall.color }}></div>
+                                    <div className="space-y-3 bg-zinc-950/50 border border-zinc-800 p-3 rounded-xl shadow-inner">
+                                        <div className="flex items-center gap-2 mb-2 pb-2 border-b border-zinc-800/50">
+                                            <div className="w-3 h-3 rounded-full shadow-lg" style={{ backgroundColor: activeWall.color }}></div>
                                             <input type="text" value={activeWall.name} onChange={(e) => setWalls(p => p.map(w => w.id === activeWall.id ? { ...w, name: e.target.value } : w))} className="bg-transparent border-none outline-none text-sm font-bold text-white w-full" />
                                         </div>
                                         <div className="grid grid-cols-2 gap-2 mt-1">
                                             <div>
-                                                <label className="text-[10px] text-gray-500 flex items-center gap-1 mb-1"><Folder size={10}/> Group</label>
-                                                <CustomSelect value={activeWall.folderId || ""} onChange={(val) => setWalls(p => p.map(w => w.id === activeWall.id ? { ...w, folderId: val ? parseInt(val) : null } : w))} buttonClassName="bg-zinc-800 border-zinc-700 px-2 py-1 text-xs" options={[{ value: "", label: "None" }, ...folders.map(f => ({ value: f.id, label: f.name }))]} />
+                                                <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-tighter flex items-center gap-1 mb-1">Group</label>
+                                                <CustomSelect value={activeWall.folderId || ""} onChange={(val) => setWalls(p => p.map(w => w.id === activeWall.id ? { ...w, folderId: val ? parseInt(val) : null } : w))} buttonClassName="bg-zinc-900 border-zinc-800 px-2 py-1 text-xs rounded-lg" options={[{ value: "", label: "None" }, ...folders.map(f => ({ value: f.id, label: f.name }))]} />
                                             </div>
                                             <div>
-                                                <label className="text-[10px] text-gray-500 flex items-center gap-1 mb-1"><Palette size={10}/> Color</label>
-                                                <div className="flex items-center gap-2 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 h-7">
+                                                <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-tighter flex items-center gap-1 mb-1">Color</label>
+                                                <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-0.5 h-7">
                                                     <ColorPicker value={activeWall.color} onChange={(val) => setWalls(p => p.map(w => w.id === activeWall.id ? { ...w, color: val } : w))} className="w-4 h-4" />
-                                                    <span className="text-xs text-gray-400 font-mono">{activeWall.color}</span>
+                                                    <span className="text-[10px] text-zinc-500 font-mono">{activeWall.color}</span>
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
                                 )}
                                 <div className="space-y-2">
-                                    <div className="flex justify-between items-center">
-                                        <h3 className="text-xs font-bold text-gray-500">OBJECTS</h3>
+                                    <div className="flex justify-between items-center mb-2">
+                                        <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Hierarchy</h3>
                                         <div className="flex gap-1">
-                                            <button onClick={addFolder} className="text-xs bg-zinc-800 hover:bg-zinc-700 px-2 py-1 rounded flex items-center gap-1" title="New Group"> <FolderPlus size={12} /> </button>
-                                            <button onClick={() => { const newId = Math.max(0, ...walls.map(w => w.id)) + 1; setWalls(p => [...p, { id: newId, name: `Obj ${newId}`, color: `hsl(${Math.random()*360},70%,60%)`, folderId: null, points: [{x:300,y:300},{x:400,y:300},{x:400,y:400},{x:300,y:400}] }]); }} className="text-xs bg-zinc-800 hover:bg-zinc-700 px-2 py-1 rounded flex items-center gap-1" title="New Object"> <Plus size={12} /> </button>
+                                            <button onClick={addFolder} className="text-xs bg-zinc-800 hover:bg-zinc-700 w-7 h-7 flex items-center justify-center rounded-lg transition-colors border border-zinc-700" title="New Group"> <FolderPlus size={14} className="text-zinc-400" /> </button>
+                                            <button onClick={() => { const newId = Math.max(0, ...walls.map(w => w.id)) + 1; setWalls(p => [...p, { id: newId, name: `Obj ${newId}`, color: `hsl(${Math.random()*360},70%,60%)`, folderId: null, points: [{x:300,y:300},{x:400,y:300},{x:400,y:400},{x:300,y:400}] }]); }} className="text-xs bg-blue-600 hover:bg-blue-500 w-7 h-7 flex items-center justify-center rounded-lg shadow-lg shadow-blue-900/40 transition-all active:scale-95" title="New Object"> <Plus size={14} className="text-white" /> </button>
                                         </div>
                                     </div>
-                                    {folders.map(folder => (<FolderItem key={folder.id} folder={folder} walls={walls} activeWallId={activeWallId} setActiveWallId={setActiveWallId} setWalls={setWalls} setFolders={setFolders} moveWall={moveWall} deleteWall={deleteWall} showConfirm={showConfirm} />))}
-                                    {walls.filter(w => w.folderId === null).map(wall => (<WallItem key={wall.id} wall={wall} activeWallId={activeWallId} setActiveWallId={setActiveWallId} moveWall={moveWall} deleteWall={deleteWall} />))}
+                                    <div className="bg-zinc-950/30 rounded-xl p-1 border border-zinc-800/50">
+                                        {folders.map(folder => (<FolderItem key={folder.id} folder={folder} walls={walls} activeWallId={activeWallId} setActiveWallId={setActiveWallId} setWalls={setWalls} setFolders={setFolders} moveWall={moveWall} deleteWall={deleteWall} showConfirm={showConfirm} />))}
+                                        {walls.filter(w => w.folderId === null).map(wall => (<WallItem key={wall.id} wall={wall} activeWallId={activeWallId} setActiveWallId={setActiveWallId} moveWall={moveWall} deleteWall={deleteWall} />))}
+                                    </div>
                                 </div>
                                 
                                 <WallStackVisualizer walls={walls} activeWallId={activeWallId} />
 
-                                <div className="mt-4 pt-4 border-t border-zinc-700">
-                                    <button onClick={() => setShowProjectManager(true)} className="w-full bg-zinc-800 hover:bg-zinc-700 text-gray-300 py-2 rounded text-xs font-bold flex items-center justify-center gap-2"><Database size={14}/> Manage Projects</button>
+                                <div className="mt-4 pt-4 border-t border-zinc-800/50">
+                                    <button onClick={() => setShowProjectManager(true)} className="w-full bg-zinc-800/50 hover:bg-zinc-800 text-zinc-400 hover:text-white py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 border border-zinc-700 transition-all"><Database size={14}/> Projects</button>
                                 </div>
-                            </>
+                            </div>
                         )}
 
                         {menuTab === 'scenes' && (
-                            <div className="space-y-4">
-                                <div className="flex gap-2 border-b border-zinc-800 pb-2 mb-2">
-                                    <button onClick={() => setShowNodeEditor(p => !p)} className={`w-full p-2 rounded text-xs flex items-center justify-center gap-1 border transition-colors ${showNodeEditor ? 'bg-purple-900/50 border-purple-500 text-purple-200' : 'bg-zinc-800 border-zinc-700 text-gray-300'}`} title="Toggle Node Editor">
+                            <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
+                                <div className="flex gap-2 border-b border-zinc-800/50 pb-4 mb-2">
+                                    <button onClick={() => setShowNodeEditor(p => !p)} className={`w-full p-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 border transition-all ${showNodeEditor ? 'bg-purple-900/30 border-purple-500 text-purple-300 shadow-lg shadow-purple-900/20' : 'bg-zinc-800/50 border-zinc-700 text-zinc-400'}`} title="Toggle Node Editor">
                                         {showNodeEditor ? <Eye size={14}/> : <EyeOff size={14}/>} {showNodeEditor ? 'Hide Graph' : 'Show Graph'}
                                     </button>
                                 </div>
                                 <div className="space-y-1">
-                                    <div className="flex justify-between items-center mb-2">
-                                        <h3 className="text-xs font-bold text-gray-400 uppercase">Cue List</h3>
-                                        <button onClick={addScene} className="text-xs bg-purple-600 hover:bg-purple-500 px-2 py-1 rounded flex items-center gap-1 text-white ml-2"><Plus size={12}/> Act</button>
+                                    <div className="flex justify-between items-center mb-4">
+                                        <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Storyboards</h3>
+                                        <button onClick={addScene} className="text-[10px] font-bold uppercase tracking-wider bg-purple-600 hover:bg-purple-500 px-3 py-1.5 rounded-lg flex items-center gap-1 text-white transition-all shadow-lg shadow-purple-900/40 active:scale-95"><Plus size={12}/> Act</button>
                                     </div>
-                                    {scenes.map((scene, sIdx) => (
-                                        <div key={scene.id} className="mb-3">
-                                            <div className="px-2 py-1 text-xs font-bold text-gray-500 uppercase border-b border-zinc-800 mb-1 flex justify-between items-center">
-                                                <span className="flex items-center gap-2"><Film size={10}/> {scene.name}</span>
-                                                <div className="flex items-center gap-1">
-                                                    <button onClick={() => moveScene(sIdx, -1)} className="text-gray-500 hover:text-white p-0.5"><ChevronUp size={12}/></button>
-                                                    <button onClick={() => moveScene(sIdx, 1)} className="text-gray-500 hover:text-white p-0.5"><ChevronDown size={12}/></button>
-                                                    <button onClick={() => deleteScene(scene.id)} className="text-gray-500 hover:text-red-400 p-0.5" title="Delete Act"><Trash2 size={12}/></button>
-                                                    <button onClick={() => addCue(scene.id)} className="text-[9px] bg-zinc-800 hover:bg-zinc-700 px-1.5 py-0.5 rounded text-gray-300 ml-1">+ Cue</button>
+                                    <div className="space-y-3">
+                                        {scenes.map((scene, sIdx) => (
+                                            <div key={scene.id} className="bg-zinc-950/30 rounded-xl border border-zinc-800/50 overflow-hidden">
+                                                <div className="px-3 py-2 bg-zinc-900/50 text-[10px] font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-800/50 flex justify-between items-center">
+                                                    <span className="flex items-center gap-2 text-purple-400"><Film size={12}/> {scene.name}</span>
+                                                    <div className="flex items-center gap-1">
+                                                        <button onClick={() => moveScene(sIdx, -1)} className="text-zinc-600 hover:text-white p-0.5"><ChevronUp size={12}/></button>
+                                                        <button onClick={() => moveScene(sIdx, 1)} className="text-zinc-600 hover:text-white p-0.5"><ChevronDown size={12}/></button>
+                                                        <button onClick={() => deleteScene(scene.id)} className="text-zinc-600 hover:text-red-400 p-0.5 transition-colors" title="Delete Act"><Trash2 size={12}/></button>
+                                                        <button onClick={() => addCue(scene.id)} className="text-[9px] bg-zinc-800 hover:bg-zinc-700 px-2 py-0.5 rounded-md text-zinc-300 ml-1 border border-zinc-700 transition-colors">+ Cue</button>
+                                                    </div>
+                                                </div>
+                                                <div className="p-1 space-y-1">
+                                                    {scene.cues.map((cue, cIdx) => {
+                                                        const isActive = activeSelection.type === 'cue' && activeSelection.sceneId === scene.id && activeSelection.cueId === cue.id;
+                                                        
+                                                        let nextCue = scene.cues[cIdx + 1];
+                                                        let nextSceneId = scene.id;
+                                                        if (!nextCue && scenes[sIdx + 1]) {
+                                                            nextCue = scenes[sIdx + 1].cues[0];
+                                                            nextSceneId = scenes[sIdx + 1].id;
+                                                        }
+
+                                                        return (
+                                                            <div key={cue.id}>
+                                                                <div onClick={() => setActiveSelection({ type: 'cue', sceneId: scene.id, cueId: cue.id })} className={`flex items-center gap-3 p-2.5 rounded-lg text-[11px] font-medium cursor-pointer transition-all group ${isActive ? 'bg-purple-600/20 border-l-4 border-purple-500 text-white shadow-inner' : 'hover:bg-zinc-800/50 text-zinc-400 border-l-4 border-transparent'}`}>
+                                                                    {isActive ? <Play size={12} fill="currentColor" className="text-purple-400 drop-shadow-[0_0_5px_rgba(168,85,247,0.5)]"/> : <span className="w-3 h-3 rounded-full border border-zinc-800 group-hover:border-zinc-600 transition-colors"/>}
+                                                                    <span className="truncate flex-1 font-bold tracking-wide">{cue.name}</span>
+                                                                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                        <button onClick={(e) => { e.stopPropagation(); deleteCue(scene.id, cue.id); }} className="text-zinc-600 hover:text-red-400 p-1"><Trash2 size={12}/></button>
+                                                                    </div>
+                                                                </div>
+                                                                {nextCue && (
+                                                                    <div className="px-6 py-1.5">
+                                                                        <div 
+                                                                            className={`h-[2px] relative flex justify-center items-center cursor-pointer group/trans transition-all duration-300 ${activeSelection.type === 'transition' && activeSelection.nextCueId === nextCue.id ? 'bg-purple-500 shadow-[0_0_10px_rgba(168,85,247,0.5)]' : 'bg-zinc-800 hover:bg-zinc-700'}`} 
+                                                                            onClick={() => setActiveSelection({ type: 'transition', sceneId: nextSceneId, prevCueId: cue.id, nextCueId: nextCue.id, cueId: nextCue.id })}
+                                                                        >
+                                                                            <div className={`w-6 h-6 rounded-full bg-zinc-900 border-2 transition-all flex items-center justify-center absolute ${activeSelection.type === 'transition' && activeSelection.nextCueId === nextCue.id ? 'border-purple-400 scale-110 shadow-lg' : 'border-zinc-800 group-hover/trans:border-zinc-600'}`}>
+                                                                                <Link size={10} className={activeSelection.type === 'transition' && activeSelection.nextCueId === nextCue.id ? "text-purple-400" : "text-zinc-600 group-hover/trans:text-zinc-400"}/>
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )
+                                                    })}
                                                 </div>
                                             </div>
-                                            <div className="space-y-0 pl-1">
-                                                {scene.cues.map((cue, cIdx) => {
-                                                    const isActive = activeSelection.type === 'cue' && activeSelection.sceneId === scene.id && activeSelection.cueId === cue.id;
-                                                    
-                                                    // Find the next cue, even if it's in the next Act
-                                                    let nextCue = scene.cues[cIdx + 1];
-                                                    let nextSceneId = scene.id;
-                                                    if (!nextCue && scenes[sIdx + 1]) {
-                                                        nextCue = scenes[sIdx + 1].cues[0];
-                                                        nextSceneId = scenes[sIdx + 1].id;
-                                                    }
-
-                                                    return (
-                                                        <div key={cue.id}>
-                                                            <div onClick={() => setActiveSelection({ type: 'cue', sceneId: scene.id, cueId: cue.id })} className={`flex items-center gap-2 p-2 rounded text-xs cursor-pointer transition-all group ${isActive ? 'bg-purple-900/50 border-l-2 border-purple-400 text-white' : 'hover:bg-zinc-800 text-gray-400 border-l-2 border-transparent'}`}>
-                                                                {isActive ? <Play size={10} fill="currentColor"/> : <span className="w-2.5"/>}
-                                                                <span className="truncate flex-1">{cue.name}</span>
-                                                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                                    <button onClick={(e) => { e.stopPropagation(); moveCue(scene.id, cIdx, -1); }} className="text-gray-500 hover:text-white p-0.5"><ChevronUp size={10}/></button>
-                                                                    <button onClick={(e) => { e.stopPropagation(); moveCue(scene.id, cIdx, 1); }} className="text-gray-500 hover:text-white p-0.5"><ChevronDown size={10}/></button>
-                                                                    <button onClick={(e) => { e.stopPropagation(); deleteCue(scene.id, cue.id); }} className="text-gray-500 hover:text-red-400 p-0.5" title="Delete Cue"><Trash2 size={10}/></button>
-                                                                </div>
-                                                            </div>
-                                                            {nextCue && (
-                                                                <div className={`h-2 my-0.5 rounded-full mx-2 cursor-pointer hover:bg-purple-500/50 transition-colors group relative flex justify-center items-center ${activeSelection.type === 'transition' && activeSelection.nextCueId === nextCue.id ? 'bg-purple-500' : 'bg-zinc-800'}`} onClick={() => setActiveSelection({ type: 'transition', sceneId: nextSceneId, prevCueId: cue.id, nextCueId: nextCue.id, cueId: nextCue.id })}>
-                                                                    <div className="w-3 h-3 rounded-full bg-zinc-600 border border-zinc-900 group-hover:bg-white group-hover:scale-125 transition-transform flex items-center justify-center"><Link size={8} className="text-zinc-900"/></div>
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    )
-                                                })}
-                                            </div>
-                                        </div>
-                                    ))}
+                                        ))}
+                                    </div>
                                 </div>
 
-                                <div className="mt-4 pt-4 border-t border-zinc-700">
+                                <div className="mt-4 pt-4 border-t border-zinc-800/50">
                                     <button 
                                         onClick={() => setAssetBrowserState({ isOpen: true, type: 'image', callback: () => {} })} 
-                                        className="w-full bg-zinc-800 hover:bg-zinc-700 text-gray-300 py-2 rounded text-xs font-bold flex items-center justify-center gap-2"
+                                        className="w-full bg-zinc-800/50 hover:bg-zinc-800 text-zinc-400 hover:text-white py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 border border-zinc-700 transition-all"
                                     >
-                                        <Folder size={14}/> Asset Library
+                                        <Folder size={14}/> Assets
                                     </button>
                                 </div>
                             </div>

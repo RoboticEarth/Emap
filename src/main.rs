@@ -28,6 +28,7 @@ struct AppState {
     project_db: Mutex<Option<Connection>>,
     active_project_id: Mutex<Option<String>>,
     discovered_monitors: Mutex<Vec<MonitorInfo>>,
+    monitor_config: Mutex<Option<AppConfig>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -36,7 +37,7 @@ struct AssetMeta { id: String, name: String, mime_type: String }
 #[derive(Serialize, Deserialize)]
 struct ProjectMeta { id: String, name: String, created_at: String }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Clone)]
 struct AppConfig { 
     #[serde(default)]
     dashboard_screen_name: String 
@@ -52,13 +53,9 @@ struct IndexQuery { screen: Option<String> }
 async fn index(data: web::Data<AppState>, query: web::Query<IndexQuery>) -> impl Responder {
     let screen_name = query.screen.clone().unwrap_or_else(|| "Unknown".to_string());
     
-    // Try to fetch the monitor config from the SYSTEM DB
-    let config_opt: Option<AppConfig> = {
-        let conn = data.system_db.lock().unwrap();
-        conn.query_row("SELECT value FROM system_data WHERE key = 'monitor_config'", [], |r| {
-            let s: String = r.get(0)?;
-            Ok(serde_json::from_str(&s).unwrap_or_default())
-        }).ok()
+    let config_opt = {
+        let config = data.monitor_config.lock().unwrap();
+        config.clone()
     };
 
     match config_opt {
@@ -110,12 +107,9 @@ async fn sync_all(data: web::Data<AppState>) -> impl Responder {
         Err(_) => (None, None, None),
     };
 
-    let monitor_config: Option<AppConfig> = {
-        let conn = data.system_db.lock().unwrap();
-        conn.query_row("SELECT value FROM system_data WHERE key = 'monitor_config'", [], |r| {
-            let s: String = r.get(0)?;
-            Ok(serde_json::from_str(&s).unwrap_or_default())
-        }).ok()
+    let monitor_config = {
+        let config = data.monitor_config.lock().unwrap();
+        config.clone()
     };
 
     HttpResponse::Ok().json(SyncResponse {
@@ -153,6 +147,14 @@ async fn register_monitor(data: web::Data<AppState>, monitor: web::Json<MonitorI
 #[post("/api/config/monitor")]
 async fn save_monitor_config(data: web::Data<AppState>, config: web::Json<AppConfig>) -> impl Responder {
     let config_val = config.into_inner();
+    let config_clone = config_val.clone();
+    
+    // Update Cache
+    {
+        let mut cache = data.monitor_config.lock().unwrap();
+        *cache = Some(config_clone);
+    }
+
     let res = web::block(move || {
         let conn = data.system_db.lock().unwrap();
         let config_str = serde_json::to_string(&config_val).unwrap();
@@ -163,18 +165,21 @@ async fn save_monitor_config(data: web::Data<AppState>, config: web::Json<AppCon
 
 #[get("/api/config/monitor")]
 async fn get_monitor_config(data: web::Data<AppState>) -> impl Responder {
-    let config_opt: Option<AppConfig> = {
-        let conn = data.system_db.lock().unwrap();
-        conn.query_row("SELECT value FROM system_data WHERE key = 'monitor_config'", [], |r| {
-            let s: String = r.get(0)?;
-            Ok(serde_json::from_str(&s).unwrap_or_default())
-        }).ok()
+    let config_opt = {
+        let config = data.monitor_config.lock().unwrap();
+        config.clone()
     };
     match config_opt { Some(c) => HttpResponse::Ok().json(c), None => HttpResponse::NotFound().finish() }
 }
 
 #[post("/api/config/reset")]
 async fn reset_monitor_config(data: web::Data<AppState>) -> impl Responder {
+    // Clear Cache
+    {
+        let mut cache = data.monitor_config.lock().unwrap();
+        *cache = None;
+    }
+
     let res = web::block(move || {
         let conn = data.system_db.lock().unwrap();
         conn.execute("DELETE FROM system_data WHERE key = 'monitor_config'", [])
@@ -610,6 +615,12 @@ fn main() {
             
             // Clean up old files
             purge_orphaned_projects(&global_conn);
+
+            // Load initial monitor config
+            let initial_config: Option<AppConfig> = system_conn.query_row("SELECT value FROM system_data WHERE key = 'monitor_config'", [], |r| {
+                let s: String = r.get(0)?;
+                Ok(serde_json::from_str(&s).unwrap_or_default())
+            }).ok();
             
             let app_state = web::Data::new(AppState {
                 global_db: Mutex::new(global_conn), 
@@ -617,6 +628,7 @@ fn main() {
                 project_db: Mutex::new(None), 
                 active_project_id: Mutex::new(None),
                 discovered_monitors: Mutex::new(Vec::new()),
+                monitor_config: Mutex::new(initial_config),
             });
 
             // Removed automatic loading of last_id to force user to pick a project every time.
