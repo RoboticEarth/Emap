@@ -1560,30 +1560,30 @@ const Modal = ({ isOpen, title, message, onConfirm, onCancel, type = 'confirm' }
 const TabSlider = ({ activeTab, onTabChange }) => {
     const isConfig = activeTab === 'config';
     return (
-        <div className="relative bg-zinc-900/80 rounded-lg border border-zinc-800 flex mb-6 mx-4 overflow-hidden h-10 group">
-            {/* Center Divider */}
-            <div className="absolute left-1/2 top-2 bottom-2 w-[1px] bg-zinc-800 z-0" />
+        <div className="relative bg-zinc-950/50 rounded-lg border border-zinc-800/50 flex mb-6 mx-4 h-10 overflow-hidden group">
+            {/* Faint Center Divider */}
+            <div className="absolute left-1/2 top-2 bottom-2 w-[1px] bg-zinc-800/50 z-0" />
             
-            {/* Sliding Bottom Indicator */}
+            {/* Sliding Bottom Indicator Line */}
             <div 
-                className={`absolute bottom-0 h-[2px] transition-all duration-500 ease-in-out z-20 shadow-[0_0_10px_rgba(0,0,0,0.5)]`}
+                className="absolute bottom-0 h-[3px] transition-all duration-500 cubic-bezier(0.4, 0, 0.2, 1) z-20"
                 style={{ 
                     left: isConfig ? '0%' : '50%', 
                     width: '50%',
                     backgroundColor: isConfig ? '#84cc16' : '#a855f7',
-                    boxShadow: `0 0 12px ${isConfig ? 'rgba(132,204,22,0.4)' : 'rgba(168,85,247,0.4)'}`
+                    boxShadow: `0 0 15px ${isConfig ? 'rgba(132,204,22,0.5)' : 'rgba(168,85,247,0.5)'}`
                 }}
             />
 
             <button 
                 onClick={() => onTabChange('config')}
-                className={`relative z-10 flex-1 text-[10px] font-bold uppercase tracking-[0.2em] transition-all duration-300 flex items-center justify-center gap-2 ${isConfig ? 'text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+                className={`relative z-10 flex-1 text-[10px] font-bold uppercase tracking-[0.2em] transition-all duration-300 flex items-center justify-center gap-2 ${isConfig ? 'text-white' : 'text-zinc-500 hover:text-zinc-400'}`}
             >
                 <Grid3X3 size={12} className={isConfig ? "text-lime-500" : ""} /> Geometry
             </button>
             <button 
                 onClick={() => onTabChange('scenes')}
-                className={`relative z-10 flex-1 text-[10px] font-bold uppercase tracking-[0.2em] transition-all duration-300 flex items-center justify-center gap-2 ${!isConfig ? 'text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+                className={`relative z-10 flex-1 text-[10px] font-bold uppercase tracking-[0.2em] transition-all duration-300 flex items-center justify-center gap-2 ${!isConfig ? 'text-white' : 'text-zinc-500 hover:text-zinc-400'}`}
             >
                 <Film size={12} className={!isConfig ? "text-purple-500" : ""} /> Scenes
             </button>
@@ -1663,16 +1663,25 @@ export default function App() {
 
     // Monitor for config reset
     useEffect(() => {
+        let failureCount = 0;
         const checkConfig = async () => {
             try {
                 const res = await fetch('/api/config/monitor');
                 if (!res.ok) {
-                    console.log("[APP] Monitor configuration reset detected, redirecting...");
-                    window.location.reload();
+                    failureCount++;
+                    console.warn(`[APP] Monitor config check failed (${failureCount}/5)`);
+                    if (failureCount >= 5) {
+                        console.error("[APP] Monitor configuration lost, redirecting...");
+                        window.location.reload();
+                    }
+                } else {
+                    failureCount = 0;
                 }
-            } catch (e) {}
+            } catch (e) {
+                failureCount++;
+            }
         };
-        const interval = setInterval(checkConfig, 2000);
+        const interval = setInterval(checkConfig, 2500); // Check every 2.5s
         return () => clearInterval(interval);
     }, []);
 
@@ -2050,7 +2059,7 @@ export default function App() {
             {menuTab === 'scenes' && viewMode !== 'live' && showNodeEditor && (
                 <div 
                     className={`absolute bottom-0 left-0 h-[45%] z-30 border-t border-zinc-800 bg-zinc-950/80 backdrop-blur-xl transition-all duration-500 ease-in-out`}
-                    style={{ right: menuOpen ? '256px' : '0px' }}
+                    style={{ right: menuOpen ? '272px' : '0px' }}
                 >
                     {!activeSelection.cueId ? (
                         <div className="w-full h-full flex items-center justify-center bg-black/20">
@@ -2075,12 +2084,12 @@ export default function App() {
 
             {menuOpen && viewMode !== 'live' && (
                 <div className="absolute right-4 top-4 bottom-4 w-64 bg-zinc-900/90 backdrop-blur-xl border border-zinc-800 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden transition-all duration-500 animate-scale">
-                    {/* Dynamic Hue Background */}
+                    {/* Morphing Background Glow */}
                     <div 
-                        className="absolute top-0 right-0 bottom-0 w-32 opacity-20 pointer-events-none transition-all duration-1000 ease-in-out blur-[80px]"
+                        className="absolute top-0 right-0 bottom-0 w-48 opacity-30 pointer-events-none transition-all duration-1000 ease-in-out blur-[100px]"
                         style={{ 
-                            background: `linear-gradient(to right, transparent, ${menuTab === 'config' ? '#84cc16' : '#a855f7'})`,
-                            transform: 'translateX(20%)'
+                            background: `radial-gradient(circle at right, ${menuTab === 'config' ? '#84cc16' : '#a855f7'}, transparent)`,
+                            transform: 'translateX(30%)'
                         }}
                     />
 
@@ -2196,13 +2205,13 @@ export default function App() {
                                                                     </div>
                                                                 </div>
                                                                 {nextCue && (
-                                                                    <div className="px-6 py-1.5">
+                                                                    <div className="px-6 py-2">
                                                                         <div 
-                                                                            className={`h-[2px] relative flex justify-center items-center cursor-pointer group/trans transition-all duration-300 ${activeSelection.type === 'transition' && activeSelection.nextCueId === nextCue.id ? 'bg-purple-500 shadow-[0_0_10px_rgba(168,85,247,0.5)]' : 'bg-zinc-800 hover:bg-zinc-700'}`} 
+                                                                            className={`h-[3px] rounded-full relative flex justify-center items-center cursor-pointer group/trans transition-all duration-300 ${activeSelection.type === 'transition' && activeSelection.nextCueId === nextCue.id ? 'bg-purple-500 shadow-[0_0_15px_rgba(168,85,247,0.6)]' : 'bg-zinc-800 hover:bg-zinc-700'}`} 
                                                                             onClick={() => setActiveSelection({ type: 'transition', sceneId: nextSceneId, prevCueId: cue.id, nextCueId: nextCue.id, cueId: nextCue.id })}
                                                                         >
-                                                                            <div className={`w-6 h-6 rounded-full bg-zinc-900 border-2 transition-all flex items-center justify-center absolute ${activeSelection.type === 'transition' && activeSelection.nextCueId === nextCue.id ? 'border-purple-400 scale-110 shadow-lg' : 'border-zinc-800 group-hover/trans:border-zinc-600'}`}>
-                                                                                <Link size={10} className={activeSelection.type === 'transition' && activeSelection.nextCueId === nextCue.id ? "text-purple-400" : "text-zinc-600 group-hover/trans:text-zinc-400"}/>
+                                                                            <div className={`w-7 h-7 rounded-full bg-zinc-900 border-2 transition-all flex items-center justify-center absolute ${activeSelection.type === 'transition' && activeSelection.nextCueId === nextCue.id ? 'border-purple-400 scale-110 shadow-[0_0_20px_rgba(168,85,247,0.4)]' : 'border-zinc-800 group-hover/trans:border-purple-900'}`}>
+                                                                                <Link size={12} className={activeSelection.type === 'transition' && activeSelection.nextCueId === nextCue.id ? "text-purple-400" : "text-zinc-600 group-hover/trans:text-purple-500"}/>
                                                                             </div>
                                                                         </div>
                                                                     </div>

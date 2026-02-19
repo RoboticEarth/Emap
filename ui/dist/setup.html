@@ -109,19 +109,14 @@
     </div>
 
     <div class="container">
-        <div style="margin-bottom: 0.5rem; color: #007bff; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; font-size: 0.8rem;">Initial Configuration</div>
-        <h1 style="font-size: 3rem; margin: 0; color: #007bff;" id="screen-id-large">...</h1>
+        <div style="margin-bottom: 0.5rem; color: #84cc16; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; font-size: 0.8rem;">Initial Configuration</div>
+        <h1 style="font-size: 3rem; margin: 0; color: #fff;" id="screen-id-large">...</h1>
         <div style="background: #2a2a2a; padding: 0.5rem 1rem; border-radius: 20px; margin: 0.5rem 0;">
             <h2 id="screen-name" style="color: #fff; font-weight: bold;">Detecting...</h2>
         </div>
-        <p style="color: #888; margin-top: -0.5rem; font-size: 0.9rem;">Please choose if this monitor will be your primary control panel.</p>
+        <p style="color: #888; margin-top: -0.5rem; font-size: 0.9rem;">Choose if this monitor will be your primary control panel.</p>
         
-        <div class="option" onclick="toggleSelect(event)">
-            <input type="checkbox" id="dashboard-check">
-            <label for="dashboard-check">Set as Dashboard / Control Panel</label>
-        </div>
-
-        <button id="confirm-btn" onclick="saveConfig()">Confirm Selection</button>
+        <button id="confirm-btn" class="active" onclick="saveConfig()">SELECT AS DASHBOARD</button>
         
         <div style="margin-top: 1rem; font-size: 0.8rem; color: #555;">
             Other monitors will automatically be used for projection.
@@ -131,46 +126,31 @@
     <script>
         const params = new URLSearchParams(window.location.search);
         const screen = params.get('screen');
-        const checkbox = document.getElementById('dashboard-check');
         const btn = document.getElementById('confirm-btn');
         const loader = document.getElementById('loader');
 
         if (screen) {
             document.getElementById('screen-name').textContent = "Monitor: " + screen;
-            document.getElementById('screen-id-large').textContent = screen.split('-').pop(); // Show just the ID (e.g. 1 or 2)
-        }
-
-        function showLoader() {
-            loader.style.display = 'flex';
-        }
-
-        function toggleSelect(e) {
-            if (e.target !== checkbox) {
-                checkbox.checked = !checkbox.checked;
-            }
-            updateBtn();
-        }
-
-        checkbox.addEventListener('change', updateBtn);
-
-        function updateBtn() {
-            if (checkbox.checked) {
-                btn.classList.add('active');
-                btn.disabled = false;
-            } else {
-                btn.classList.remove('active');
-                btn.disabled = true;
-            }
+            // Clean up name for display
+            let displayName = screen.replace('Unknown-', 'Monitor ');
+            document.getElementById('screen-id-large').textContent = displayName.split('-').pop();
         }
 
         let isRedirecting = false;
 
+        function showLoader(text) {
+            loader.style.display = 'flex';
+            if (text) {
+                loader.querySelector('div:last-child').textContent = text;
+            }
+        }
+
         async function saveConfig() {
-            if (!checkbox.checked || !screen || isRedirecting) return;
+            if (!screen || isRedirecting) return;
             
             isRedirecting = true;
-            showLoader();
-            btn.textContent = "Saving Configuration...";
+            showLoader("SAVING CONFIGURATION...");
+            btn.textContent = "Saving...";
             btn.classList.remove('active');
             btn.disabled = true;
 
@@ -182,40 +162,40 @@
                 });
                 
                 if (response.ok) {
-                    btn.textContent = "Configuration Saved! Synchronizing...";
-                    // Use a slightly longer delay to ensure backend has committed the DB transaction 
-                    // and allow other monitors to see the change before we redirect.
+                    showLoader("SYNCHRONIZING SCREENS...");
+                    // Longer delay to let DB settle and cache propagate
                     setTimeout(() => {
                         window.location.href = "/?screen=" + encodeURIComponent(screen);
-                    }, 1500);
+                    }, 2000);
                 } else {
                     isRedirecting = false;
+                    loader.style.display = 'none';
                     throw new Error("Failed to save");
                 }
             } catch (err) {
                 isRedirecting = false;
                 loader.style.display = 'none';
                 alert("Error saving config: " + err);
-                btn.textContent = "Confirm Selection";
+                btn.textContent = "SELECT AS DASHBOARD";
                 btn.classList.add('active');
                 btn.disabled = false;
             }
         }
 
         // Poll for changes from other screens
-        setInterval(async () => {
+        const pollInterval = setInterval(async () => {
             if (isRedirecting) return;
             try {
                 const res = await fetch('/api/config/monitor');
                 if (res.ok) {
                     const config = await res.json();
-                    if (config.dashboard_screen_name) {
+                    if (config.dashboard_screen_name && config.dashboard_screen_name !== "") {
                         isRedirecting = true;
-                        showLoader();
-                        btn.textContent = "Control Panel Selected on another monitor...";
+                        showLoader("DASHBOARD SELECTED ON OTHER SCREEN...");
+                        clearInterval(pollInterval);
                         setTimeout(() => {
                             window.location.href = "/?screen=" + encodeURIComponent(screen);
-                        }, 1000);
+                        }, 1500);
                     }
                 }
             } catch (e) {}

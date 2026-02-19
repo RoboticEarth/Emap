@@ -10,6 +10,7 @@ function Projection() {
     const [activeSelection, setActiveSelection] = useState(null);
     const [uiSync, setUiSync] = useState({ viewMode: 'live', menuTab: 'scenes', showGuides: false, activeWallId: null });
     const [isLoading, setIsLoading] = useState(true);
+    const configFailureCount = useRef(0);
     
     const [prevCueState, setPrevCueState] = useState(null);
     const [currentCueState, setCurrentCueState] = useState(null);
@@ -100,10 +101,14 @@ function Projection() {
                 }
 
                 // Monitor config reset check (if it was once present but now null)
-                // We use a counter to avoid reloading on transient network blips
                 if (!sync.monitor_config) {
-                    console.log("[PROJECTION] Monitor config missing, potentially reset...");
-                    window.location.reload();
+                    configFailureCount.current++;
+                    if (configFailureCount.current >= 5) {
+                        console.log("[PROJECTION] Monitor config missing, redirecting to setup...");
+                        window.location.reload();
+                    }
+                } else {
+                    configFailureCount.current = 0;
                 }
                 
                 setIsLoading(false);

@@ -59,13 +59,18 @@ async fn index(data: web::Data<AppState>, query: web::Query<IndexQuery>) -> impl
     };
 
     match config_opt {
-        Some(config) => {
+        Some(config) if !config.dashboard_screen_name.is_empty() => {
             if screen_name == config.dashboard_screen_name {
+                println!("[BACKEND] Serving DASHBOARD to screen: {}", screen_name);
                 return NamedFile::open_async("./ui/dist/index.html").await;
             }
+            println!("[BACKEND] Serving PROJECTION to screen: {}", screen_name);
             NamedFile::open_async("./ui/dist/projection.html").await
         },
-        None => NamedFile::open_async("./ui/dist/setup.html").await
+        _ => {
+            println!("[BACKEND] No monitor configuration found, serving SETUP to screen: {}", screen_name);
+            NamedFile::open_async("./ui/dist/setup.html").await
+        }
     }
 }
 
@@ -147,9 +152,9 @@ async fn register_monitor(data: web::Data<AppState>, monitor: web::Json<MonitorI
 #[post("/api/config/monitor")]
 async fn save_monitor_config(data: web::Data<AppState>, config: web::Json<AppConfig>) -> impl Responder {
     let config_val = config.into_inner();
-    let config_clone = config_val.clone();
+    println!("[BACKEND] Saving monitor configuration: Dashboard = {}", config_val.dashboard_screen_name);
     
-    // Update Cache
+    let config_clone = config_val.clone();
     {
         let mut cache = data.monitor_config.lock().unwrap();
         *cache = Some(config_clone);
@@ -169,12 +174,15 @@ async fn get_monitor_config(data: web::Data<AppState>) -> impl Responder {
         let config = data.monitor_config.lock().unwrap();
         config.clone()
     };
-    match config_opt { Some(c) => HttpResponse::Ok().json(c), None => HttpResponse::NotFound().finish() }
+    match config_opt { 
+        Some(c) if !c.dashboard_screen_name.is_empty() => HttpResponse::Ok().json(c), 
+        _ => HttpResponse::NotFound().finish() 
+    }
 }
 
 #[post("/api/config/reset")]
 async fn reset_monitor_config(data: web::Data<AppState>) -> impl Responder {
-    // Clear Cache
+    println!("[BACKEND] Monitor configuration RESET requested");
     {
         let mut cache = data.monitor_config.lock().unwrap();
         *cache = None;
