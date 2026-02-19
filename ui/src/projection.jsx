@@ -77,41 +77,48 @@ function Projection() {
     useEffect(() => {
         const loadAndPollData = async () => {
             try {
-                // Load project data
-                const loadedProjectData = await db.loadState('project_data_v22');
-                if (loadedProjectData) {
-                    setProjectData(loadedProjectData);
-                } else {
-                    setProjectData({ walls: [], folders: [], scenes: [] }); // Default empty state
+                const res = await fetch('/api/sync');
+                if (!res.ok) return;
+                
+                const sync = await res.json();
+                
+                // Update Project Data
+                if (sync.project_data) {
+                    setProjectData(sync.project_data);
+                } else if (!projectData) {
+                    setProjectData({ walls: [], folders: [], scenes: [] });
                 }
 
-                // Load active selection
-                const loadedActiveSelection = await db.loadState('active_cue_selection');
-                setActiveSelection(loadedActiveSelection);
+                // Update Active Selection
+                if (sync.active_selection) {
+                    setActiveSelection(sync.active_selection);
+                }
 
-                // Load UI sync state
-                const loadedUiSync = await db.loadState('ui_sync_state');
-                if (loadedUiSync) setUiSync(loadedUiSync);
+                // Update UI Sync State
+                if (sync.ui_sync) {
+                    setUiSync(sync.ui_sync);
+                }
 
-                // Poll monitor config - if it's reset, we need to show setup screen
-                const configRes = await fetch('/api/config/monitor');
-                if (!configRes.ok) {
-                    console.log("[PROJECTION] Monitor config reset detected, reloading...");
+                // Monitor config reset check (if it was once present but now null)
+                // We use a counter to avoid reloading on transient network blips
+                if (!sync.monitor_config) {
+                    console.log("[PROJECTION] Monitor config missing, potentially reset...");
                     window.location.reload();
                 }
                 
                 setIsLoading(false);
             } catch (error) {
                 console.error("Failed to load projection data:", error);
-                setIsLoading(false);
+                // Don't set isLoading(false) on the first error to keep the spinner 
+                // until we get a successful sync.
             }
         };
 
         loadAndPollData(); // Initial load
 
-        const intervalId = setInterval(loadAndPollData, 50); // Poll every 50ms as requested
+        const intervalId = setInterval(loadAndPollData, 100); // 10Hz sync
         return () => clearInterval(intervalId); // Cleanup interval on unmount
-    }, []);
+    }, [projectData]);
 
     // Update currentCueObjRef.current and transitionDetailsRef.current whenever relevant state changes
     useEffect(() => {

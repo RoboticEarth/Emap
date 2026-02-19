@@ -72,6 +72,60 @@ async fn index(data: web::Data<AppState>, query: web::Query<IndexQuery>) -> impl
     }
 }
 
+#[derive(Serialize)]
+struct SyncResponse {
+    project_data: Option<serde_json::Value>,
+    active_selection: Option<serde_json::Value>,
+    ui_sync: Option<serde_json::Value>,
+    monitor_config: Option<AppConfig>,
+}
+
+#[get("/api/sync")]
+async fn sync_all(data: web::Data<AppState>) -> impl Responder {
+    let data_clone = data.clone();
+    let res = web::block(move || {
+        let db_guard = data_clone.project_db.lock().unwrap();
+        let conn = match &*db_guard { Some(c) => c, None => return (None, None, None) };
+        
+        let project_data: Option<serde_json::Value> = conn.query_row("SELECT value FROM kv_store WHERE key = 'project_data_v22'", [], |r| {
+            let s: String = r.get(0)?;
+            Ok(serde_json::from_str(&s).unwrap_or_default())
+        }).ok();
+
+        let active_selection: Option<serde_json::Value> = conn.query_row("SELECT value FROM kv_store WHERE key = 'active_cue_selection'", [], |r| {
+            let s: String = r.get(0)?;
+            Ok(serde_json::from_str(&s).unwrap_or_default())
+        }).ok();
+
+        let ui_sync: Option<serde_json::Value> = conn.query_row("SELECT value FROM kv_store WHERE key = 'ui_sync_state'", [], |r| {
+            let s: String = r.get(0)?;
+            Ok(serde_json::from_str(&s).unwrap_or_default())
+        }).ok();
+
+        (project_data, active_selection, ui_sync)
+    }).await;
+
+    let (project_data, active_selection, ui_sync) = match res {
+        Ok(v) => v,
+        Err(_) => (None, None, None),
+    };
+
+    let monitor_config: Option<AppConfig> = {
+        let conn = data.system_db.lock().unwrap();
+        conn.query_row("SELECT value FROM system_data WHERE key = 'monitor_config'", [], |r| {
+            let s: String = r.get(0)?;
+            Ok(serde_json::from_str(&s).unwrap_or_default())
+        }).ok()
+    };
+
+    HttpResponse::Ok().json(SyncResponse {
+        project_data,
+        active_selection,
+        ui_sync,
+        monitor_config,
+    })
+}
+
 #[get("/dashboard")]
 async fn dashboard() -> impl Responder { NamedFile::open_async("./ui/dist/dashboard.html").await }
 
@@ -574,6 +628,7 @@ fn main() {
                     .service(index).service(dashboard).service(projection)
                     .service(get_monitors).service(register_monitor).service(save_monitor_config).service(get_monitor_config).service(reset_monitor_config).service(list_projects).service(delete_project).service(create_project)
                     .service(load_project).service(get_active_project).service(get_kv).service(save_kv).service(list_assets)
+                    .service(sync_all)
                     .service(list_files).service(import_asset).service(save_asset).service(get_asset).service(delete_asset)
                     .service(get_drives).service(delete_fs_file)
                     .service(Files::new("/", "./ui/dist").index_file("index.html"))
@@ -633,55 +688,88 @@ fn main() {
         Item {{
             id: root
             
-            Component.onCompleted: {{
-                console.log("QML: Starting Emap Projection System");
-                console.log("QML: Detected " + Qt.application.screens.length + " screens");
+            property var screens: []
+
+            function updateScreens() {{
+                console.log("QML: Updating screens. Current count: " + Qt.application.screens.length);
+                var newScreens = [];
                 for (var i = 0; i < Qt.application.screens.length; i++) {{
                     var s = Qt.application.screens[i];
-                    console.log("QML: Screen " + i + ": " + s.name + 
-                                " (" + s.width + "x" + s.height + ")");
-                    
-                    // Register with backend
+                    newScreens.push({{
+                        name: s.name || "Unknown-" + i,
+                        virtualX: s.virtualX,
+                        virtualY: s.virtualY,
+                        width: s.width,
+                        height: s.height,
+                        screen: s
+                    }});
+                }}
+                screens = newScreens;
+                
+                // Register with backend
+                for (var j = 0; j < screens.length; j++) {{
+                    var sc = screens[j];
                     var xhr = new XMLHttpRequest();
                     xhr.open("POST", "http://127.0.0.1:8080/api/monitors/register", true);
                     xhr.setRequestHeader("Content-Type", "application/json");
                     xhr.send(JSON.stringify({{
-                        id: i,
-                        name: s.name,
-                        x: s.virtualX,
-                        y: s.virtualY,
-                        width: s.width,
-                        height: s.height,
-                        is_primary: (i === 0)
+                        id: j,
+                        name: sc.name,
+                        x: sc.virtualX,
+                        y: sc.virtualY,
+                        width: sc.width,
+                        height: sc.height,
+                        is_primary: (j === 0)
                     }}));
                 }}
             }}
 
+            Component.onCompleted: {{
+                console.log("QML: Starting Emap Projection System");
+                updateScreens();
+            }}
+
+            // Monitor for screen changes
+            Connections {{
+                target: Qt.application
+                function onScreensChanged() {{ 
+                    console.log("QML: Screens changed signal received");
+                    updateScreens(); 
+                }}
+            }}
+
             Instantiator {{
-                model: Qt.application.screens
+                model: root.screens
                 delegate: Window {{
                     id: win
-                    visible: true
                     
-                    // Explicitly set coordinates to help the compositor (especially on Wayland/Hyprland)
+                    // Set screen BEFORE visibility
+                    screen: modelData.screen
                     x: modelData.virtualX
                     y: modelData.virtualY
                     width: modelData.width
                     height: modelData.height
                     
-                    visibility: Window.FullScreen
-                    screen: modelData
                     title: "Emap - " + modelData.name
                     color: "black"
 
                     Component.onCompleted: {{
-                        console.log("QML: Created window for " + modelData.name + 
+                        console.log("QML: Window created for screen: " + modelData.name + 
                                     " at " + x + "," + y + " (" + width + "x" + height + ")");
+                        showTimer.start();
+                    }}
+                    
+                    Timer {{
+                        id: showTimer
+                        interval: 500
+                        onTriggered: {{
+                            win.visibility = Window.FullScreen;
+                            win.visible = true;
+                        }}
                     }}
 
                     WebEngineView {{
                         anchors.fill: parent
-                        // Pass the screen name to the backend so it can decide what to serve
                         url: "http://127.0.0.1:8080/?screen=" + encodeURIComponent(modelData.name)
                         
                         settings.pluginsEnabled: true
@@ -702,7 +790,7 @@ fn main() {
                             request.accept()
                         }}
                         onContextMenuRequested: function(request) {{
-                            request.accepted = true // This disables the menu
+                            request.accepted = true 
                         }}
                     }}
                 }}

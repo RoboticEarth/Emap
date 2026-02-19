@@ -158,9 +158,12 @@
             }
         }
 
+        let isRedirecting = false;
+
         async function saveConfig() {
-            if (!checkbox.checked || !screen) return;
+            if (!checkbox.checked || !screen || isRedirecting) return;
             
+            isRedirecting = true;
             showLoader();
             btn.textContent = "Saving Configuration...";
             btn.classList.remove('active');
@@ -181,9 +184,11 @@
                         window.location.href = "/?screen=" + encodeURIComponent(screen);
                     }, 500);
                 } else {
+                    isRedirecting = false;
                     throw new Error("Failed to save");
                 }
             } catch (err) {
+                isRedirecting = false;
                 loader.style.display = 'none';
                 alert("Error saving config: " + err);
                 btn.textContent = "Confirm Selection";
@@ -194,17 +199,19 @@
 
         // Poll for changes from other screens
         setInterval(async () => {
+            if (isRedirecting) return;
             try {
                 const res = await fetch('/api/config/monitor');
                 if (res.ok) {
                     const config = await res.json();
                     if (config.dashboard_screen_name) {
+                        isRedirecting = true;
                         showLoader();
                         window.location.href = "/?screen=" + encodeURIComponent(screen);
                     }
                 }
             } catch (e) {}
-        }, 100);
+        }, 500);
     </script>
 </body>
 </html>
