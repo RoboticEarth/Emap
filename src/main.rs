@@ -50,7 +50,7 @@ struct MonitorInfo { id: u32, name: String, x: i32, y: i32, width: u32, height: 
 struct IndexQuery { screen: Option<String> }
 
 #[get("/")]
-async fn index(data: web::Data<AppState>, query: web::Query<IndexQuery>) -> impl Responder {
+async fn index(req: HttpRequest, data: web::Data<AppState>, query: web::Query<IndexQuery>) -> impl Responder {
     let screen_name = query.screen.clone().unwrap_or_else(|| "Unknown".to_string());
     
     let config_opt = {
@@ -60,7 +60,7 @@ async fn index(data: web::Data<AppState>, query: web::Query<IndexQuery>) -> impl
 
     println!("[BACKEND] [INDEX] Request from screen: '{}'", screen_name);
 
-    match config_opt {
+    let response_file = match config_opt {
         Some(config) if !config.dashboard_screen_name.is_empty() => {
             let is_dashboard = screen_name.trim() == config.dashboard_screen_name.trim();
             println!("[BACKEND] [INDEX] Comparing screen_name: '{}' (len:{}) with dashboard: '{}' (len:{}). Match: {}", 
@@ -68,17 +68,23 @@ async fn index(data: web::Data<AppState>, query: web::Query<IndexQuery>) -> impl
             
             if is_dashboard {
                 println!("[BACKEND] [INDEX] Serving DASHBOARD to '{}'", screen_name);
-                return NamedFile::open_async("./ui/dist/index.html").await;
+                "./ui/dist/index.html"
             } else {
                 println!("[BACKEND] [INDEX] Serving PROJECTION to '{}'", screen_name);
-                return NamedFile::open_async("./ui/dist/projection.html").await;
+                "./ui/dist/projection.html"
             }
         },
         _ => {
-            println!("[BACKEND] [INDEX] No monitor configuration found in memory. Serving SETUP (setup.html) to '{}'", screen_name);
-            NamedFile::open_async("./ui/dist/setup.html").await
+            println!("[BACKEND] [INDEX] No monitor configuration found. Serving SETUP to '{}'", screen_name);
+            "./ui/dist/setup.html"
         }
-    }
+    };
+
+    NamedFile::open_async(response_file).await.unwrap()
+        .customize()
+        .insert_header(("Cache-Control", "no-store, must-revalidate, max-age=0"))
+        .insert_header(("Pragma", "no-cache"))
+        .insert_header(("Expires", "0"))
 }
 
 #[derive(Serialize)]

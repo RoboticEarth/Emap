@@ -190,31 +190,32 @@
 
         // Poll for changes from other screens
         const pollInterval = setInterval(async () => {
-            if (isRedirecting) return;
+            if (isRedirecting) {
+                console.log("[SETUP] Redirect already in progress, skipping poll.");
+                return;
+            }
             try {
                 const res = await fetch('/api/config/monitor?t=' + Date.now());
                 if (res.ok) {
                     const config = await res.json();
                     
                     if (config.dashboard_screen_name && config.dashboard_screen_name !== "" && config.dashboard_screen_name !== screen) {
-                        console.log("[SETUP] Detected dashboard selection on another screen: '" + config.dashboard_screen_name + "'. (My screen is: '" + screen + "')");
+                        console.log("[SETUP] Redirecting: Dashboard selected elsewhere.");
                         isRedirecting = true;
-                        showLoader("DASHBOARD SELECTED ON OTHER SCREEN: " + config.dashboard_screen_name);
                         clearInterval(pollInterval);
+                        showLoader("DASHBOARD SELECTED ON OTHER SCREEN: " + config.dashboard_screen_name);
                         setTimeout(() => {
                             window.location.href = "/?screen=" + encodeURIComponent(screen);
                         }, 1500);
                     } else if (config.dashboard_screen_name === screen) {
-                        console.log("[SETUP] This screen is now dashboard. Redirecting to app...");
+                        console.log("[SETUP] Redirecting: This screen is dashboard.");
                         isRedirecting = true;
-                        showLoader("SYNCHRONIZING...");
                         clearInterval(pollInterval);
+                        showLoader("SYNCHRONIZING...");
                         window.location.href = "/?screen=" + encodeURIComponent(screen);
                     }
                 }
-            } catch (e) {
-                // console.warn("[SETUP] Poll failed: ", e);
-            }
+            } catch (e) {}
         }, 800);
     </script>
 </body>
