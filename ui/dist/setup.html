@@ -148,14 +148,16 @@
         async function saveConfig() {
             if (!screen || isRedirecting) return;
             
+            console.log("[SETUP] User selected as dashboard: " + screen);
             isRedirecting = true;
-            clearInterval(pollInterval); // Stop polling immediately if WE are saving
+            clearInterval(pollInterval); 
             showLoader("SAVING CONFIGURATION...");
             btn.textContent = "Saving...";
             btn.classList.remove('active');
             btn.disabled = true;
 
             try {
+                console.log("[SETUP] Sending POST /api/config/monitor for screen: " + screen);
                 const response = await fetch('/api/config/monitor', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -163,19 +165,20 @@
                 });
                 
                 if (response.ok) {
+                    console.log("[SETUP] Save successful. Redirecting to: /?screen=" + encodeURIComponent(screen));
                     showLoader("SYNCHRONIZING...");
-                    // Fast redirect
                     setTimeout(() => {
                         window.location.href = "/?screen=" + encodeURIComponent(screen);
                     }, 800);
                 } else {
+                    const errorText = await response.text();
+                    console.error("[SETUP] Save failed with status: " + response.status + " error: " + errorText);
                     isRedirecting = false;
-                    // Restart polling if save failed
-                    // (Actually page will probably stay on setup)
                     loader.style.display = 'none';
-                    throw new Error("Failed to save");
+                    throw new Error("Failed to save: " + errorText);
                 }
             } catch (err) {
+                console.error("[SETUP] Catch error during save: ", err);
                 isRedirecting = false;
                 loader.style.display = 'none';
                 alert("Error saving config: " + err);
@@ -189,13 +192,12 @@
         const pollInterval = setInterval(async () => {
             if (isRedirecting) return;
             try {
-                // Add timestamp for cache-busting
                 const res = await fetch('/api/config/monitor?t=' + Date.now());
                 if (res.ok) {
                     const config = await res.json();
                     
-                    // If dashboard is set AND it's NOT this screen
                     if (config.dashboard_screen_name && config.dashboard_screen_name !== "" && config.dashboard_screen_name !== screen) {
+                        console.log("[SETUP] Detected dashboard selection on another screen: " + config.dashboard_screen_name);
                         isRedirecting = true;
                         showLoader("DASHBOARD SELECTED ON OTHER SCREEN: " + config.dashboard_screen_name);
                         clearInterval(pollInterval);
@@ -203,14 +205,16 @@
                             window.location.href = "/?screen=" + encodeURIComponent(screen);
                         }, 1500);
                     } else if (config.dashboard_screen_name === screen) {
-                        // If it's already this screen, just redirect
+                        console.log("[SETUP] This screen is now dashboard. Redirecting.");
                         isRedirecting = true;
                         showLoader("SYNCHRONIZING...");
                         clearInterval(pollInterval);
                         window.location.href = "/?screen=" + encodeURIComponent(screen);
                     }
                 }
-            } catch (e) {}
+            } catch (e) {
+                // console.warn("[SETUP] Poll failed: ", e);
+            }
         }, 800);
     </script>
 </body>

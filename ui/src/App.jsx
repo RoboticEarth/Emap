@@ -1604,6 +1604,16 @@ export default function App() {
     const [showGuides, setShowGuides] = useState(false); 
     const [moveMode, setMoveMode] = useState(false);
     const [isFullscreen, setIsFullscreen] = useState(false);
+
+    // Auto-bypass fullscreen gate if in Qt WebEngine (which is always fullscreen for us)
+    useEffect(() => {
+        const isQt = navigator.userAgent.includes('QtWebEngine');
+        if (isQt) {
+            console.log("[APP] Detected QtWebEngine - Bypassing fullscreen gate");
+            setIsFullscreen(true);
+        }
+    }, []);
+
     const [showNodeEditor, setShowNodeEditor] = useState(true);
     const [storageUsage, setStorageUsage] = useState(null);
     const [assetBrowserState, setAssetBrowserState] = useState({ isOpen: false, type: 'image', callback: null });
@@ -1702,12 +1712,15 @@ export default function App() {
 
     useEffect(() => {
         const loadData = async () => {
+            console.log("[APP] Starting loadData...");
             setIsLoading(true);
             try {
                 const activeProject = await db.getActiveProject();
+                console.log("[APP] Active project check:", activeProject);
                 if (activeProject && activeProject.id) {
                     setActiveProjectId(activeProject.id);
                     const savedState = await db.loadState('project_data_v22');
+                    console.log("[APP] Loaded project state:", !!savedState);
                     if (savedState) {
                         setWalls(savedState.walls || []);
                         setFolders(savedState.folders || []);
@@ -1720,15 +1733,15 @@ export default function App() {
                     setStorageUsage(usage);
                     setShowProjectManager(false);
                 } else {
-                    // No active project, force project manager
+                    console.log("[APP] No active project found, showing Project Manager");
                     setActiveProjectId(null);
                     setShowProjectManager(true);
                 }
             } catch (e) {
-                console.error("Failed to load state", e);
+                console.error("[APP ERROR] Failed to load initial state:", e);
                 setShowProjectManager(true);
             } finally {
-                // Keep loading screen up for a bit to ensure UI is ready
+                console.log("[APP] loadData complete, finishing loading state");
                 setTimeout(() => setIsLoading(false), 800);
             }
         };

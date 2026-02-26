@@ -52,6 +52,7 @@ struct IndexQuery { screen: Option<String> }
 #[get("/")]
 async fn index(data: web::Data<AppState>, query: web::Query<IndexQuery>) -> impl Responder {
     let screen_name = query.screen.clone().unwrap_or_else(|| "Unknown".to_string());
+    println!("[BACKEND] [INDEX] Request from screen: '{}'", screen_name);
     
     let config_opt = {
         let config = data.monitor_config.lock().unwrap();
@@ -60,6 +61,7 @@ async fn index(data: web::Data<AppState>, query: web::Query<IndexQuery>) -> impl
 
     match config_opt {
         Some(config) if !config.dashboard_screen_name.is_empty() => {
+            println!("[BACKEND] [INDEX] Comparing '{}' with configured dashboard: '{}'", screen_name, config.dashboard_screen_name);
             if screen_name == config.dashboard_screen_name {
                 println!("[BACKEND] Serving DASHBOARD to screen: {}", screen_name);
                 return NamedFile::open_async("./ui/dist/index.html").await;
@@ -68,7 +70,7 @@ async fn index(data: web::Data<AppState>, query: web::Query<IndexQuery>) -> impl
             NamedFile::open_async("./ui/dist/projection.html").await
         },
         _ => {
-            println!("[BACKEND] No monitor configuration found, serving SETUP to screen: {}", screen_name);
+            println!("[BACKEND] No monitor configuration found, serving SETUP to screen: '{}'", screen_name);
             NamedFile::open_async("./ui/dist/setup.html").await
         }
     }
@@ -134,6 +136,7 @@ async fn projection() -> impl Responder { NamedFile::open_async("./ui/dist/proje
 #[get("/api/monitors")]
 async fn get_monitors(data: web::Data<AppState>) -> impl Responder {
     let monitors = data.discovered_monitors.lock().unwrap();
+    // println!("[BACKEND] [MONITOR] Returning {} discovered monitors", monitors.len());
     HttpResponse::Ok().json(monitors.clone())
 }
 
@@ -141,9 +144,14 @@ async fn get_monitors(data: web::Data<AppState>) -> impl Responder {
 async fn register_monitor(data: web::Data<AppState>, monitor: web::Json<MonitorInfo>) -> impl Responder {
     let mut monitors = data.discovered_monitors.lock().unwrap();
     let m = monitor.into_inner();
+    
     if let Some(existing) = monitors.iter_mut().find(|x| x.name == m.name) {
-        *existing = m;
+        if existing.x != m.x || existing.y != m.y || existing.width != m.width || existing.height != m.height {
+            println!("[BACKEND] [MONITOR] Updated: '{}' -> ({}x{} at {},{})", m.name, m.width, m.height, m.x, m.y);
+            *existing = m;
+        }
     } else {
+        println!("[BACKEND] [MONITOR] Registered: '{}' ({}x{} at {},{})", m.name, m.width, m.height, m.x, m.y);
         monitors.push(m);
     }
     HttpResponse::Ok().finish()
@@ -152,7 +160,7 @@ async fn register_monitor(data: web::Data<AppState>, monitor: web::Json<MonitorI
 #[post("/api/config/monitor")]
 async fn save_monitor_config(data: web::Data<AppState>, config: web::Json<AppConfig>) -> impl Responder {
     let config_val = config.into_inner();
-    println!("[BACKEND] Saving monitor configuration: Dashboard = {}", config_val.dashboard_screen_name);
+    println!("[BACKEND] [CONFIG] Saving monitor configuration: Dashboard = '{}'", config_val.dashboard_screen_name);
     
     let config_clone = config_val.clone();
     {
@@ -161,11 +169,25 @@ async fn save_monitor_config(data: web::Data<AppState>, config: web::Json<AppCon
     }
 
     let res = web::block(move || {
-        let conn = data.system_db.lock().unwrap();
-        let config_str = serde_json::to_string(&config_val).unwrap();
+        let conn = data.system_db.lock().map_err(|_| "Failed to lock system DB")?;
+        let config_str = serde_json::to_string(&config_val).map_err(|_| "Failed to serialize config")?;
         conn.execute("INSERT OR REPLACE INTO system_data (key, value) VALUES (?1, ?2)", params!["monitor_config", config_str])
+            .map_err(|e| {
+                println!("[BACKEND ERROR] [CONFIG] Database error in save_monitor_config: {}", e);
+                "Database error"
+            })
     }).await;
-    match res { Ok(_) => HttpResponse::Ok().finish(), Err(_) => HttpResponse::InternalServerError().finish() }
+
+    match res { 
+        Ok(_) => {
+            println!("[BACKEND] [CONFIG] Successfully saved to database.");
+            HttpResponse::Ok().finish()
+        }, 
+        Err(e) => {
+            println!("[BACKEND ERROR] [CONFIG] Failed to save monitor config: {}", e);
+            HttpResponse::InternalServerError().body(e.to_string())
+        }
+    }
 }
 
 #[get("/api/config/monitor")]
@@ -180,9 +202,12 @@ async fn get_monitor_config(data: web::Data<AppState>) -> impl Responder {
                 .insert_header(("Cache-Control", "no-store"))
                 .json(c)
         },
-        _ => HttpResponse::NotFound()
+        _ => {
+            // println!("[BACKEND] [CONFIG] No dashboard configuration found (Returning 404)");
+            HttpResponse::NotFound()
                 .insert_header(("Cache-Control", "no-store"))
                 .finish()
+        }
     }
 }
 
