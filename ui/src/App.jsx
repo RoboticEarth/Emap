@@ -2055,7 +2055,7 @@ export default function App() {
                     return { fill: wall.color, stroke: isLive ? 'none' : wall.color };
                 };
                 const currStyle = getWallStyle(currentCueState);
-                const baseOpacity = isLive ? 1 : (wall.id === activeWallId ? 0.5 : 0.1);
+                const baseOpacity = isLive ? 1 : (wall.id === activeWallId ? 0.8 : 0.4);
                 
                 const isProjecting = (isLive || menuTab === 'scenes') && currentCueState?.nodes?.some(n => n.type === 'output' && n.data.wallId === wall.id && currentCueState.connections?.some(c => c.to === n.id));
                 
