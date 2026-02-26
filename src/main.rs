@@ -52,25 +52,30 @@ struct IndexQuery { screen: Option<String> }
 #[get("/")]
 async fn index(data: web::Data<AppState>, query: web::Query<IndexQuery>) -> impl Responder {
     let screen_name = query.screen.clone().unwrap_or_else(|| "Unknown".to_string());
-    println!("[BACKEND] [INDEX] Request from screen: '{}'", screen_name);
     
     let config_opt = {
         let config = data.monitor_config.lock().unwrap();
         config.clone()
     };
 
+    println!("[BACKEND] [INDEX] Request from screen: '{}'", screen_name);
+
     match config_opt {
         Some(config) if !config.dashboard_screen_name.is_empty() => {
-            println!("[BACKEND] [INDEX] Comparing '{}' with configured dashboard: '{}'", screen_name, config.dashboard_screen_name);
-            if screen_name == config.dashboard_screen_name {
-                println!("[BACKEND] Serving DASHBOARD to screen: {}", screen_name);
+            let is_dashboard = screen_name.trim() == config.dashboard_screen_name.trim();
+            println!("[BACKEND] [INDEX] Comparing screen_name: '{}' (len:{}) with dashboard: '{}' (len:{}). Match: {}", 
+                screen_name, screen_name.len(), config.dashboard_screen_name, config.dashboard_screen_name.len(), is_dashboard);
+            
+            if is_dashboard {
+                println!("[BACKEND] [INDEX] Serving DASHBOARD to '{}'", screen_name);
                 return NamedFile::open_async("./ui/dist/index.html").await;
+            } else {
+                println!("[BACKEND] [INDEX] Serving PROJECTION to '{}'", screen_name);
+                return NamedFile::open_async("./ui/dist/projection.html").await;
             }
-            println!("[BACKEND] Serving PROJECTION to screen: {}", screen_name);
-            NamedFile::open_async("./ui/dist/projection.html").await
         },
         _ => {
-            println!("[BACKEND] No monitor configuration found, serving SETUP to screen: '{}'", screen_name);
+            println!("[BACKEND] [INDEX] No monitor configuration found in memory. Serving SETUP (setup.html) to '{}'", screen_name);
             NamedFile::open_async("./ui/dist/setup.html").await
         }
     }

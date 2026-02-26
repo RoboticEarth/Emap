@@ -1679,19 +1679,26 @@ export default function App() {
                 const res = await fetch('/api/config/monitor');
                 if (!res.ok) {
                     failureCount++;
-                    console.warn(`[APP] Monitor config check failed (${failureCount}/5)`);
+                    console.warn(`[APP] Monitor config check failed: HTTP ${res.status} (${failureCount}/5)`);
+                    
                     if (failureCount >= 5) {
-                        console.error("[APP] Monitor configuration lost, redirecting...");
+                        console.error("[APP] Monitor configuration considered LOST. Reloading to trigger Setup...");
                         window.location.reload();
                     }
                 } else {
+                    if (failureCount > 0) console.log("[APP] Monitor config check recovered.");
                     failureCount = 0;
                 }
             } catch (e) {
                 failureCount++;
+                console.error("[APP] Monitor config check network error:", e);
+                if (failureCount >= 5) {
+                    console.warn("[APP] Persistent network failure. Reloading...");
+                    window.location.reload();
+                }
             }
         };
-        const interval = setInterval(checkConfig, 2500); // Check every 2.5s
+        const interval = setInterval(checkConfig, 2500);
         return () => clearInterval(interval);
     }, []);
 

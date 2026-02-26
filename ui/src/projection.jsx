@@ -103,11 +103,13 @@ function Projection() {
                 // Monitor config reset check (if it was once present but now null)
                 if (!sync.monitor_config) {
                     configFailureCount.current++;
+                    console.warn(`[PROJECTION] Sync check failed: Monitor config missing in sync (${configFailureCount.current}/5)`);
                     if (configFailureCount.current >= 5) {
-                        console.log("[PROJECTION] Monitor config missing, redirecting to setup...");
+                        console.error("[PROJECTION] Monitor configuration LOST. Reloading to trigger Setup...");
                         window.location.reload();
                     }
                 } else {
+                    if (configFailureCount.current > 0) console.log("[PROJECTION] Sync check recovered.");
                     configFailureCount.current = 0;
                 }
                 
