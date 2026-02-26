@@ -197,7 +197,7 @@
                     const config = await res.json();
                     
                     if (config.dashboard_screen_name && config.dashboard_screen_name !== "" && config.dashboard_screen_name !== screen) {
-                        console.log("[SETUP] Detected dashboard selection on another screen: " + config.dashboard_screen_name);
+                        console.log("[SETUP] Detected dashboard selection on another screen: '" + config.dashboard_screen_name + "'. (My screen is: '" + screen + "')");
                         isRedirecting = true;
                         showLoader("DASHBOARD SELECTED ON OTHER SCREEN: " + config.dashboard_screen_name);
                         clearInterval(pollInterval);
@@ -205,7 +205,7 @@
                             window.location.href = "/?screen=" + encodeURIComponent(screen);
                         }, 1500);
                     } else if (config.dashboard_screen_name === screen) {
-                        console.log("[SETUP] This screen is now dashboard. Redirecting.");
+                        console.log("[SETUP] This screen is now dashboard. Redirecting to app...");
                         isRedirecting = true;
                         showLoader("SYNCHRONIZING...");
                         clearInterval(pollInterval);

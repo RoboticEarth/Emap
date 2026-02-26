@@ -737,38 +737,38 @@ fn main() {
     };
     
     // Initialize WebEngine
-    let qml_code = format!(r#"
-        {}
-        {}
+    let qml_code = r#"
+        QML_IMPORTS
+        WEBENGINE_IMPORT
 
-        Item {{
+        Item {
             id: root
             
             property var screens: []
 
-            function updateScreens() {{
+            function updateScreens() {
                 console.log("QML: Updating screens. Current count: " + Qt.application.screens.length);
                 var newScreens = [];
-                for (var i = 0; i < Qt.application.screens.length; i++) {{
+                for (var i = 0; i < Qt.application.screens.length; i++) {
                     var s = Qt.application.screens[i];
-                    newScreens.push({{
+                    newScreens.push({
                         name: s.name || "Unknown-" + i,
                         virtualX: s.virtualX,
                         virtualY: s.virtualY,
                         width: s.width,
                         height: s.height,
                         screen: s
-                    }});
-                }}
+                    });
+                }
                 screens = newScreens;
                 
                 // Register with backend
-                for (var j = 0; j < screens.length; j++) {{
+                for (var j = 0; j < screens.length; j++) {
                     var sc = screens[j];
                     var xhr = new XMLHttpRequest();
                     xhr.open("POST", "http://127.0.0.1:8080/api/monitors/register", true);
                     xhr.setRequestHeader("Content-Type", "application/json");
-                    xhr.send(JSON.stringify({{
+                    xhr.send(JSON.stringify({
                         id: j,
                         name: sc.name,
                         x: sc.virtualX,
@@ -776,27 +776,27 @@ fn main() {
                         width: sc.width,
                         height: sc.height,
                         is_primary: (j === 0)
-                    }}));
-                }}
-            }}
+                    }));
+                }
+            }
 
-            Component.onCompleted: {{
+            Component.onCompleted: {
                 console.log("QML: Starting Emap Projection System");
                 updateScreens();
-            }}
+            }
 
             // Monitor for screen changes
-            Connections {{
+            Connections {
                 target: Qt.application
-                function onScreensChanged() {{ 
+                function onScreensChanged() { 
                     console.log("QML: Screens changed signal received");
                     updateScreens(); 
-                }}
-            }}
+                }
+            }
 
-            Instantiator {{
+            Instantiator {
                 model: root.screens
-                delegate: Window {{
+                delegate: Window {
                     id: win
                     
                     // Set screen BEFORE visibility
@@ -809,22 +809,22 @@ fn main() {
                     title: "Emap - " + modelData.name
                     color: "black"
 
-                    Component.onCompleted: {{
+                    Component.onCompleted: {
                         console.log("QML: Window created for screen: " + modelData.name + 
                                     " at " + x + "," + y + " (" + width + "x" + height + ")");
                         showTimer.start();
-                    }}
+                    }
                     
-                    Timer {{
+                    Timer {
                         id: showTimer
                         interval: 500
-                        onTriggered: {{
+                        onTriggered: {
                             win.visibility = Window.FullScreen;
                             win.visible = true;
-                        }}
-                    }}
+                        }
+                    }
 
-                    WebEngineView {{
+                    WebEngineView {
                         anchors.fill: parent
                         url: "http://127.0.0.1:8080/?screen=" + encodeURIComponent(modelData.name)
                         
@@ -834,25 +834,31 @@ fn main() {
                         settings.accelerated2dCanvasEnabled: true
                         settings.webGLEnabled: true
                         
-                        onLoadingChanged: function(loadRequest) {{
-                            if (loadRequest.status === WebEngineView.LoadFailedStatus) {{
-                                console.error("QML: Load failed for " + loadRequest.url + " : " + loadRequest.errorString);
-                            }} else if (loadRequest.status === WebEngineView.LoadSucceededStatus) {{
-                                console.log("QML: Load succeeded for " + loadRequest.url);
-                            }}
-                        }}
+                        onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {
+                            var lvl = ["DEBUG", "INFO", "WARN", "ERROR"][level] || "LOG";
+                            console.log("[WEB " + lvl + "] (" + modelData.name + ") " + message);
+                        }
 
-                        onFullScreenRequested: function(request) {{
+                        onLoadingChanged: function(loadRequest) {
+                            if (loadRequest.status === WebEngineView.LoadFailedStatus) {
+                                console.error("QML: Load failed for " + loadRequest.url + " : " + loadRequest.errorString);
+                            } else if (loadRequest.status === WebEngineView.LoadSucceededStatus) {
+                                console.log("QML: Load succeeded for " + loadRequest.url);
+                            }
+                        }
+
+                        onFullScreenRequested: function(request) {
                             request.accept()
-                        }}
-                        onContextMenuRequested: function(request) {{
+                        }
+                        onContextMenuRequested: function(request) {
                             request.accepted = true 
-                        }}
-                    }}
-                }}
-            }}
-        }}
-    "#, qml_imports, webengine_import);
+                        }
+                    }
+                }
+            }
+        }
+    "#.replace("QML_IMPORTS", qml_imports)
+      .replace("WEBENGINE_IMPORT", webengine_import);
 
     engine.load_data(qml_code.into());
 
