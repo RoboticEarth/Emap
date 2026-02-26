@@ -175,14 +175,20 @@ async fn get_monitor_config(data: web::Data<AppState>) -> impl Responder {
         config.clone()
     };
     match config_opt { 
-        Some(c) if !c.dashboard_screen_name.is_empty() => HttpResponse::Ok().json(c), 
-        _ => HttpResponse::NotFound().finish() 
+        Some(c) if !c.dashboard_screen_name.is_empty() => {
+            HttpResponse::Ok()
+                .insert_header(("Cache-Control", "no-store"))
+                .json(c)
+        },
+        _ => HttpResponse::NotFound()
+                .insert_header(("Cache-Control", "no-store"))
+                .finish()
     }
 }
 
 #[post("/api/config/reset")]
 async fn reset_monitor_config(data: web::Data<AppState>) -> impl Responder {
-    println!("[BACKEND] Monitor configuration RESET requested");
+    println!("[BACKEND] Monitor configuration RESET requested - Clearing all screens");
     {
         let mut cache = data.monitor_config.lock().unwrap();
         *cache = None;

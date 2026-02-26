@@ -149,6 +149,7 @@
             if (!screen || isRedirecting) return;
             
             isRedirecting = true;
+            clearInterval(pollInterval); // Stop polling immediately if WE are saving
             showLoader("SAVING CONFIGURATION...");
             btn.textContent = "Saving...";
             btn.classList.remove('active');
@@ -162,13 +163,15 @@
                 });
                 
                 if (response.ok) {
-                    showLoader("SYNCHRONIZING SCREENS...");
-                    // Longer delay to let DB settle and cache propagate
+                    showLoader("SYNCHRONIZING...");
+                    // Fast redirect
                     setTimeout(() => {
                         window.location.href = "/?screen=" + encodeURIComponent(screen);
-                    }, 2000);
+                    }, 800);
                 } else {
                     isRedirecting = false;
+                    // Restart polling if save failed
+                    // (Actually page will probably stay on setup)
                     loader.style.display = 'none';
                     throw new Error("Failed to save");
                 }
@@ -186,20 +189,29 @@
         const pollInterval = setInterval(async () => {
             if (isRedirecting) return;
             try {
-                const res = await fetch('/api/config/monitor');
+                // Add timestamp for cache-busting
+                const res = await fetch('/api/config/monitor?t=' + Date.now());
                 if (res.ok) {
                     const config = await res.json();
-                    if (config.dashboard_screen_name && config.dashboard_screen_name !== "") {
+                    
+                    // If dashboard is set AND it's NOT this screen
+                    if (config.dashboard_screen_name && config.dashboard_screen_name !== "" && config.dashboard_screen_name !== screen) {
                         isRedirecting = true;
-                        showLoader("DASHBOARD SELECTED ON OTHER SCREEN...");
+                        showLoader("DASHBOARD SELECTED ON OTHER SCREEN: " + config.dashboard_screen_name);
                         clearInterval(pollInterval);
                         setTimeout(() => {
                             window.location.href = "/?screen=" + encodeURIComponent(screen);
                         }, 1500);
+                    } else if (config.dashboard_screen_name === screen) {
+                        // If it's already this screen, just redirect
+                        isRedirecting = true;
+                        showLoader("SYNCHRONIZING...");
+                        clearInterval(pollInterval);
+                        window.location.href = "/?screen=" + encodeURIComponent(screen);
                     }
                 }
             } catch (e) {}
-        }, 1000);
+        }, 800);
     </script>
 </body>
 </html>
