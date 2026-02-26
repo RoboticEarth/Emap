@@ -50,7 +50,7 @@ struct MonitorInfo { id: u32, name: String, x: i32, y: i32, width: u32, height: 
 struct IndexQuery { screen: Option<String> }
 
 #[get("/")]
-async fn index(req: HttpRequest, data: web::Data<AppState>, query: web::Query<IndexQuery>) -> impl Responder {
+async fn index(_req: HttpRequest, data: web::Data<AppState>, query: web::Query<IndexQuery>) -> impl Responder {
     let screen_name = query.screen.clone().unwrap_or_else(|| "Unknown".to_string());
     
     let config_opt = {
