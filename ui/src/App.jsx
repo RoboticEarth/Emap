@@ -455,7 +455,7 @@ const LoadingScreen = () => (
             {/* Ambient background glow */}
             <div className="absolute -inset-20 bg-blue-600/10 rounded-full blur-[100px] animate-pulse"></div>
             
-            <div className="relative w-80 mb-12">
+            <div className="relative w-[480px] mb-12">
                 <img src="/robotic T M.png" alt="Logo" className="w-full relative z-10 filter drop-shadow-2xl" />
                 <div className="absolute inset-0 z-20 bg-gradient-to-r from-transparent via-white/20 to-transparent w-full h-full -skew-x-12 blur-sm animate-shimmer" style={{mixBlendMode: 'overlay'}}></div>
             </div>
@@ -1591,6 +1591,52 @@ const TabSlider = ({ activeTab, onTabChange }) => {
     );
 };
 
+// --- SETTINGS MODAL ---
+
+const SettingsModal = ({ isOpen, onClose, lowResourceMode, setLowResourceMode }) => {
+    if (!isOpen) return null;
+    return createPortal(
+        <div className="fixed inset-0 z-[30000] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-scale">
+            <div className="bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl w-[500px] flex flex-col relative overflow-hidden">
+                <div className="flex justify-between items-center bg-zinc-950 p-4 border-b border-zinc-800">
+                    <div className="flex items-center gap-3">
+                        <Settings className="text-blue-500" size={20} />
+                        <h2 className="text-sm font-bold text-white tracking-[0.2em] uppercase">System Settings</h2>
+                    </div>
+                    <img src="/robotic T M.png" alt="Logo" className="h-6 opacity-50" />
+                </div>
+
+                <div className="p-8 space-y-8">
+                    <div className="space-y-4">
+                        <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Performance</h3>
+                        <div className="flex items-center justify-between p-4 bg-zinc-950/30 rounded-lg border border-zinc-800 hover:border-zinc-700 transition-colors">
+                            <div className="flex flex-col gap-1">
+                                <span className="text-xs font-bold text-gray-200 uppercase tracking-wider flex items-center gap-2">
+                                    Low Resource Mode
+                                </span>
+                                <span className="text-[10px] text-zinc-600 font-medium max-w-[280px]">Disables blurs, animations, and transparency for Mini PC hardware.</span>
+                            </div>
+                            <button 
+                                onClick={() => setLowResourceMode(!lowResourceMode)}
+                                className={`w-10 h-5 rounded-full p-1 transition-all duration-300 ${lowResourceMode ? 'bg-blue-600' : 'bg-zinc-800'}`}
+                            >
+                                <div className={`w-3 h-3 rounded-full bg-white transition-all duration-300 transform ${lowResourceMode ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="p-6 bg-zinc-950/50 border-t border-zinc-800 flex justify-end gap-3">
+                    <button onClick={onClose} className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold transition-all uppercase tracking-widest shadow-lg shadow-blue-900/20">
+                        Apply Changes
+                    </button>
+                </div>
+            </div>
+        </div>,
+        document.body
+    );
+};
+
 export default function App() {
     const [modal, setModal] = useState({ isOpen: false, title: '', message: '', onConfirm: null, type: 'confirm' });
     const showConfirm = (title, message, onConfirm) => setModal({ isOpen: true, title, message, onConfirm: () => { onConfirm(); setModal(prev => ({ ...prev, isOpen: false })); }, type: 'confirm' });
@@ -1604,6 +1650,11 @@ export default function App() {
     const [showGuides, setShowGuides] = useState(false); 
     const [moveMode, setMoveMode] = useState(false);
     const [isFullscreen, setIsFullscreen] = useState(false);
+    const [lowResourceMode, setLowResourceMode] = useState(() => {
+        const saved = localStorage.getItem('emap_low_resource_mode');
+        return saved === 'true';
+    });
+    const [showSettings, setShowSettings] = useState(false);
 
     // Auto-bypass fullscreen gate if in Qt WebEngine (which is always fullscreen for us)
     useEffect(() => {
@@ -1622,6 +1673,10 @@ export default function App() {
     const [activeProjectId, setActiveProjectId] = useState(null);
     const [usbDrives, setUsbDrives] = useState([]);
     
+    useEffect(() => {
+        localStorage.setItem('emap_low_resource_mode', lowResourceMode);
+    }, [lowResourceMode]);
+
     // USB Polling
     useEffect(() => {
         const checkDrives = async () => {
@@ -2021,10 +2076,11 @@ export default function App() {
     );
 
     return (
-        <div className="w-full h-full relative font-sans text-white bg-zinc-950 flex flex-col">
+        <div className={`w-full h-full relative font-sans text-white bg-zinc-950 flex flex-col ${lowResourceMode ? 'low-resource-mode' : ''}`}>
             {isLoading && <LoadingScreen />}
+            <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} lowResourceMode={lowResourceMode} setLowResourceMode={setLowResourceMode} />
 
-            {!isFullscreen && (
+            {!isFullscreen && !navigator.userAgent.includes('QtWebEngine') && (
                 <div className="absolute inset-0 z-[100] bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center text-center p-8">
                     <div className="max-w-4xl space-y-8">
                         <img src="/robotic T M.png" className="w-[600px] mx-auto mb-8" alt="Logo" />
@@ -2078,7 +2134,7 @@ export default function App() {
 
             {menuTab === 'scenes' && viewMode !== 'live' && showNodeEditor && (
                 <div 
-                    className={`absolute bottom-0 left-0 h-[45%] z-30 border-t border-zinc-800 bg-zinc-950/80 backdrop-blur-xl transition-all duration-500 ease-in-out`}
+                    className={`absolute bottom-0 left-0 h-[45%] z-30 border-t border-zinc-800 bg-zinc-950/70 backdrop-blur-md transition-all duration-500 ease-in-out ${lowResourceMode ? 'low-resource-mode-panel' : ''}`}
                     style={{ right: menuOpen ? '272px' : '0px' }}
                 >
                     {!activeSelection.cueId ? (
@@ -2103,15 +2159,17 @@ export default function App() {
             )}
 
             {menuOpen && viewMode !== 'live' && (
-                <div className="absolute right-4 top-4 bottom-4 w-64 bg-zinc-900/90 backdrop-blur-xl border border-zinc-800 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden transition-all duration-500 animate-scale">
+                <div className={`absolute right-4 top-4 bottom-4 w-64 bg-zinc-900/70 backdrop-blur-md border border-zinc-800 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden transition-all duration-500 animate-scale ${lowResourceMode ? 'low-resource-mode-panel' : ''}`}>
                     {/* Morphing Background Glow */}
-                    <div 
-                        className="absolute top-0 right-0 bottom-0 w-48 opacity-30 pointer-events-none transition-all duration-1000 ease-in-out blur-[100px]"
-                        style={{ 
-                            background: `radial-gradient(circle at right, ${menuTab === 'config' ? '#84cc16' : '#a855f7'}, transparent)`,
-                            transform: 'translateX(30%)'
-                        }}
-                    />
+                    {!lowResourceMode && (
+                        <div 
+                            className="absolute top-0 right-0 bottom-0 w-48 opacity-30 pointer-events-none transition-all duration-1000 ease-in-out blur-[100px]"
+                            style={{ 
+                                background: `radial-gradient(circle at right, ${menuTab === 'config' ? '#84cc16' : '#a855f7'}, transparent)`,
+                                transform: 'translateX(30%)'
+                            }}
+                        />
+                    )}
 
                     <div className="p-4 pb-0 relative z-10">
                         <button 
@@ -2122,6 +2180,12 @@ export default function App() {
                             className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-lg shadow-lg flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-95"
                         >
                             <Play size={20} fill="currentColor" /> GO LIVE
+                        </button>
+                        <button 
+                            onClick={() => setShowSettings(true)}
+                            className="w-full mt-2 text-zinc-500 hover:text-white py-2 text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 transition-all opacity-50 hover:opacity-100"
+                        >
+                            <Settings size={14} /> Settings
                         </button>
                     </div>
                     <div className="p-4 border-b border-zinc-800/50 flex justify-between items-center bg-zinc-900/50 relative z-10">
@@ -2245,12 +2309,13 @@ export default function App() {
                                     </div>
                                 </div>
 
-                                <div className="mt-4 pt-4 border-t border-zinc-800/50">
+                                <div className="mt-4 pt-4 border-t border-zinc-800/50 flex flex-col gap-2">
+                                    <button onClick={() => setShowProjectManager(true)} className="w-full bg-zinc-800/50 hover:bg-zinc-800 text-zinc-400 hover:text-white py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 border border-zinc-700 transition-all"><Database size={14}/> Project Manager</button>
                                     <button 
                                         onClick={() => setAssetBrowserState({ isOpen: true, type: 'image', callback: () => {} })} 
                                         className="w-full bg-zinc-800/50 hover:bg-zinc-800 text-zinc-400 hover:text-white py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 border border-zinc-700 transition-all"
                                     >
-                                        <Folder size={14}/> Assets
+                                        <Folder size={14}/> Asset Library
                                     </button>
                                 </div>
                             </div>
