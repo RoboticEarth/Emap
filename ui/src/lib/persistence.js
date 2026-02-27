@@ -66,6 +66,7 @@ export class PersistenceManager {
         return list.map(item => ({
             id: item.id,
             url: '/api/asset/' + encodeURIComponent(item.id),
+            path: item.path,
             type: item.mime_type.startsWith('video') ? 'video' : 'image',
             file: { name: item.name }
         }));
@@ -130,6 +131,17 @@ export class PersistenceManager {
         if (res.status === 409) return { conflict: true, path };
         if (!res.ok) throw new Error('Import failed');
         return await res.json();
+    }
+
+    async copyFileToAssets(path, overwrite = false) {
+        const res = await fetch('/api/fs/copy_to_assets', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path, overwrite })
+        });
+        if (res.status === 409) return { conflict: true, path };
+        if (!res.ok) throw new Error('Copy failed');
+        return true;
     }
 
     async deleteFileSystemItem(path) {

@@ -155,32 +155,20 @@ canvas {
 .low-resource-mode .backdrop-blur-md,
 .low-resource-mode .backdrop-blur-xl,
 .low-resource-mode .backdrop-blur-sm,
-.low-resource-mode .backdrop-blur-lg,
+.low-resource-mode .backdrop-blur-lg {
+    backdrop-filter: none !important;
+}
+
 .low-resource-mode .low-resource-mode-panel {
     backdrop-filter: none !important;
     background-color: #18181b !important; /* zinc-900 */
     opacity: 1 !important;
 }
 
-/* Convert transparent background classes to solid colors */
-.low-resource-mode [class*="bg-black/"],
-.low-resource-mode [class*="bg-zinc-900/"],
-.low-resource-mode [class*="bg-zinc-950/"],
-.low-resource-mode [class*="bg-zinc-800/"],
-.low-resource-mode [class*="bg-purple-900/"],
-.low-resource-mode [class*="bg-blue-600/"],
-.low-resource-mode [class*="bg-white/"] {
-    background-color: #18181b !important; /* Fallback to solid zinc-900 */
-    opacity: 1 !important;
-}
+/* Allow partial transparency for some backgrounds to maintain UI feel */
+/* We remove the rule that forces solid colors for these classes */
 
-/* Special cases for very dark areas */
-.low-resource-mode .bg-zinc-950,
-.low-resource-mode .bg-zinc-950\/30,
-.low-resource-mode .bg-zinc-950\/50,
-.low-resource-mode .bg-zinc-950\/80 {
-    background-color: #09090b !important;
-}
+/* Special cases for very dark areas - removed solid color override */
 
 /* Ensure buttons still look like buttons without shadows/fades */
 .low-resource-mode button {

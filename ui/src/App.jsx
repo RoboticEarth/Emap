@@ -124,7 +124,7 @@ const WarpedTextureGrid = ({ wallPoints }) => {
     return <g opacity="0.6">{grid}</g>;
 };
 
-const FileExplorer = ({ isOpen, onClose, onImport }) => {
+const FileExplorer = ({ isOpen, onClose, onImport, showConfirm, showAlert, hiddenDrives = [], setHiddenDrives }) => {
     const [currentPath, setCurrentPath] = useState('');
     const [items, setItems] = useState([]);
     const [selectedPaths, setSelectedPaths] = useState([]);
@@ -170,12 +170,25 @@ const FileExplorer = ({ isOpen, onClose, onImport }) => {
 
     const handleDeleteItem = async (e, path, name) => {
         e.stopPropagation();
-        if (confirm(`Are you sure you want to permanently delete "${name}" from disk?`)) {
+        showConfirm("Delete Item", `Are you sure you want to permanently delete "${name}" from disk?`, async () => {
             setLoading(true);
+            
+            // Get the asset ID before deleting the file, so we can update nodes
+            const currentAssets = await db.getAllAssets();
+            const deletedAsset = currentAssets.find(a => a.path === path);
+            
             await db.deleteFileSystemItem(path);
+            
+            if (deletedAsset && window.onAssetDeleted) {
+                window.onAssetDeleted(deletedAsset.id, name);
+            }
+
+            // Trigger a refresh if the asset library is open in the background
+            if (window.refreshAssets) window.refreshAssets();
+
             await loadPath(currentPath);
             setLoading(false);
-        }
+        });
     };
 
     const selectAll = () => {
@@ -192,12 +205,17 @@ const FileExplorer = ({ isOpen, onClose, onImport }) => {
             
             if (currentBulkDecision) {
                 if (currentBulkDecision === 'overwrite') {
-                    await db.importAssetFromPath(path, true);
+                    if (activeTab === 'server') {
+                        await db.importAssetFromPath(path, true);
+                    } else {
+                        await db.copyFileToAssets(path, true);
+                    }
                 }
                 continue;
             }
 
-            const result = await db.importAssetFromPath(path, false);
+            const method = activeTab === 'server' ? db.importAssetFromPath.bind(db) : db.copyFileToAssets.bind(db);
+            const result = await method(path, false);
             
             if (result && result.conflict) {
                 // Wait for user decision
@@ -208,7 +226,7 @@ const FileExplorer = ({ isOpen, onClose, onImport }) => {
                 setConflict(null);
                 
                 if (decision === 'overwrite') {
-                    await db.importAssetFromPath(path, true);
+                    await method(path, true);
                     if (applyToAll) currentBulkDecision = 'overwrite';
                 } else {
                     if (applyToAll) currentBulkDecision = 'skip';
@@ -217,11 +235,57 @@ const FileExplorer = ({ isOpen, onClose, onImport }) => {
         }
         
         setLoading(false);
-        onImport();
-        onClose();
+        if (activeTab === 'server') {
+            onImport(); // Only reload library if we actually linked something to it
+            onClose();
+        } else {
+            // Switch to server tab to show where files went, but no annoying alert
+            setActiveTab('server');
+            loadPath('');
+        }
+    };
+
+    const handleDeleteSelected = async () => {
+        if (selectedPaths.length === 0) return;
+        
+        showConfirm(
+            "Delete Multiple Items", 
+            `Are you sure you want to permanently delete ${selectedPaths.length} items from disk? This cannot be undone.`, 
+            async () => {
+                setLoading(true);
+                for (const path of selectedPaths) {
+                    await db.deleteFileSystemItem(path);
+                    
+                    // Trigger UI updates for nodes if any of these were in the project
+                    const currentAssets = await db.getAllAssets();
+                    const asset = currentAssets.find(a => a.path === path);
+                    if (asset && window.onAssetDeleted) {
+                        window.onAssetDeleted(asset.id, path.split('/').pop());
+                    }
+                }
+                
+                if (window.refreshAssets) window.refreshAssets();
+                setSelectedPaths([]);
+                await loadPath(currentPath);
+                setLoading(false);
+            }
+        );
+    };
+
+    const handleHideDrive = (e, path) => {
+        e.stopPropagation();
+        showConfirm("Hide Drive", "Are you sure you want to hide this USB drive? It won't show notifications until you re-enable it in Settings.", () => {
+            setHiddenDrives(prev => [...prev, path]);
+            if (activeTab === path) {
+                setActiveTab('server');
+                loadPath('');
+            }
+        });
     };
 
     if (!isOpen) return null;
+
+    const visibleDrives = drives.filter(d => !hiddenDrives.includes(d.path));
 
     return (
         <div className="fixed inset-0 z-[210] bg-black/80 backdrop-blur-sm flex items-center justify-center p-8">
@@ -245,27 +309,40 @@ const FileExplorer = ({ isOpen, onClose, onImport }) => {
                     </div>
                 </div>
 
-                <div className="flex bg-zinc-950 border-b border-zinc-800">
+                <div className="flex bg-zinc-950 border-b border-zinc-800 overflow-x-auto no-scrollbar">
                     <button 
                         onClick={() => { setActiveTab('server'); loadPath(''); }}
-                        className={`px-6 py-3 text-xs font-bold transition-colors ${activeTab === 'server' ? 'text-blue-400 border-b-2 border-blue-400 bg-zinc-900' : 'text-gray-500 hover:text-gray-300'}`}
+                        className={`px-6 py-3 text-xs font-bold transition-colors whitespace-nowrap ${activeTab === 'server' ? 'text-blue-400 border-b-2 border-blue-400 bg-zinc-900' : 'text-gray-500 hover:text-gray-300'}`}
                     >
                         SERVER ASSETS
                     </button>
-                    {drives.map(drive => (
-                        <button 
-                            key={drive.path}
-                            onClick={() => { setActiveTab(drive.path); loadPath(drive.path); }}
-                            className={`px-6 py-3 text-xs font-bold transition-colors flex items-center gap-2 ${activeTab === drive.path ? 'text-orange-400 border-b-2 border-orange-400 bg-zinc-900' : 'text-gray-500 hover:text-gray-300'}`}
-                        >
-                            <Cable size={14} /> USB: {drive.name}
-                        </button>
+                    {visibleDrives.map(drive => (
+                        <div key={drive.path} className="relative group/drive">
+                            <button 
+                                onClick={() => { setActiveTab(drive.path); loadPath(drive.path); }}
+                                className={`px-6 py-3 text-xs font-bold transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === drive.path ? 'text-orange-400 border-b-2 border-orange-400 bg-zinc-900' : 'text-gray-500 hover:text-gray-300'}`}
+                            >
+                                <Cable size={14} /> USB: {drive.name}
+                            </button>
+                            <button 
+                                onClick={(e) => handleHideDrive(e, drive.path)}
+                                className="absolute right-1 top-1 p-0.5 bg-zinc-800 hover:bg-red-600 text-zinc-500 hover:text-white rounded opacity-0 group-hover/drive:opacity-100 transition-opacity z-10"
+                                title="Hide Drive"
+                            >
+                                <EyeOff size={10} />
+                            </button>
+                        </div>
                     ))}
                 </div>
 
                 <div className="p-2 bg-zinc-900/50 flex justify-between items-center border-b border-zinc-800">
                     <div className="text-[10px] text-gray-500 font-mono truncate px-2">{currentPath || 'Root'}</div>
                     <div className="flex gap-2">
+                        {selectedPaths.length > 0 && (
+                            <button onClick={handleDeleteSelected} className="text-[10px] font-bold text-red-500 hover:text-red-400 px-2 py-1 flex items-center gap-1 border border-red-900/30 rounded bg-red-900/10 transition-colors mr-2">
+                                <Trash2 size={10}/> Delete Selected ({selectedPaths.length})
+                            </button>
+                        )}
                         <button onClick={selectAll} className="text-[10px] font-bold text-blue-400 hover:text-blue-300 px-2 py-1">Select All</button>
                         <button onClick={() => setSelectedPaths([])} className="text-[10px] font-bold text-gray-500 hover:text-gray-300 px-2 py-1">Clear</button>
                     </div>
@@ -333,7 +410,7 @@ const FileExplorer = ({ isOpen, onClose, onImport }) => {
                             disabled={selectedPaths.length === 0 || loading} 
                             className="px-8 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed shadow-lg shadow-blue-900/20 transition-all active:scale-95 uppercase tracking-widest"
                         >
-                            {activeTab === 'server' ? 'IMPORT TO PROJECT' : 'IMPORT TO ASSETS'}
+                            {activeTab === 'server' ? 'ADD TO PROJECT LIBRARY' : 'COPY TO SERVER ASSETS'}
                         </button>
                     </div>
                 </div>
@@ -342,7 +419,7 @@ const FileExplorer = ({ isOpen, onClose, onImport }) => {
     );
 };
 
-const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, initialTab = 'image' }) => {
+const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, hiddenDrives, setHiddenDrives, initialTab = 'image' }) => {
 
     const [activeTab, setActiveTab] = useState(initialTab);
 
@@ -350,19 +427,20 @@ const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, initi
 
     const [showFileExplorer, setShowFileExplorer] = useState(false);
 
-
+    // If initialTab is 'all', it means we are in browsing mode and should show both tabs
+    const isBrowsingMode = initialTab === 'all';
 
     useEffect(() => {
 
         if (isOpen) {
 
-            setActiveTab(initialTab);
+            setActiveTab(isBrowsingMode ? 'image' : initialTab);
 
             loadAssets();
 
         }
 
-    }, [isOpen, initialTab]);
+    }, [isOpen, initialTab, isBrowsingMode]);
 
 
 
@@ -374,6 +452,11 @@ const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, initi
 
     };
 
+    useEffect(() => {
+        window.refreshAssets = loadAssets;
+        return () => { window.refreshAssets = null; };
+    }, []);
+
 
 
     const handleImport = async () => {
@@ -381,12 +464,21 @@ const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, initi
         await loadAssets();
     };
 
-    const handleDelete = async (e, id) => {
+    const handleDelete = async (e, id, name) => {
         e.stopPropagation();
-        showConfirm("Delete Asset", "Are you sure you want to delete this asset from the library?", async () => {
+        showConfirm("Delete Asset", "Are you sure you want to delete this asset from the library and disk?", async () => {
             await db.deleteAsset(id);
+            // Also remove from all cues/nodes that use this asset
+            onDeleteAssetFromNodes(id, name);
             await loadAssets();
         });
+    };
+
+    const onDeleteAssetFromNodes = (assetId, assetName) => {
+        // This is handled in the parent App component's state
+        if (window.onAssetDeleted) {
+            window.onAssetDeleted(assetId, assetName);
+        }
     };
 
     const filteredAssets = assets.filter(a => a.type === activeTab);
@@ -395,19 +487,27 @@ const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, initi
 
     return (
         <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-8">
-            <FileExplorer isOpen={showFileExplorer} onClose={() => setShowFileExplorer(false)} onImport={handleImport} />
+            <FileExplorer 
+                isOpen={showFileExplorer} 
+                onClose={() => setShowFileExplorer(false)} 
+                onImport={handleImport} 
+                showConfirm={showConfirm} 
+                showAlert={showAlert} 
+                hiddenDrives={hiddenDrives}
+                setHiddenDrives={setHiddenDrives}
+            />
             <div className="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-4xl h-[80vh] flex flex-col shadow-2xl overflow-hidden">
                 <div className="p-4 border-b border-zinc-700 flex justify-between items-center bg-zinc-950">
                     <h2 className="text-lg font-bold text-white flex items-center gap-2"><Folder size={20} className="text-blue-400"/> Asset Library</h2>
                     <button onClick={onClose} className="text-gray-400 hover:text-white"><X size={24}/></button>
                 </div>
                 <div className="flex border-b border-zinc-800 bg-zinc-900">
-                    {initialTab === 'image' && (
+                    {(isBrowsingMode || activeTab === 'image') && (
                         <button onClick={() => setActiveTab('image')} className={`flex-1 py-3 text-sm font-bold flex items-center justify-center gap-2 ${activeTab === 'image' ? 'text-blue-400 border-b-2 border-blue-400 bg-zinc-800/50' : 'text-gray-500 hover:text-gray-300'}`}>
                             <ImageIcon size={16}/> Images
                         </button>
                     )}
-                    {initialTab === 'video' && (
+                    {(isBrowsingMode || activeTab === 'video') && (
                         <button onClick={() => setActiveTab('video')} className={`flex-1 py-3 text-sm font-bold flex items-center justify-center gap-2 ${activeTab === 'video' ? 'text-pink-400 border-b-2 border-pink-400 bg-zinc-800/50' : 'text-gray-500 hover:text-gray-300'}`}>
                             <Video size={16}/> Videos
                         </button>
@@ -422,7 +522,7 @@ const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, initi
                             <span className="text-xs font-bold text-gray-500 group-hover:text-gray-300">Browse Server</span>
                         </div>
                                                         {filteredAssets.map(asset => (
-                                                            <div key={asset.id} onClick={() => onSelect(asset)} className="aspect-square bg-black border border-zinc-700 rounded-lg overflow-hidden relative group cursor-pointer hover:ring-2 hover:ring-blue-500">
+                                                            <div key={asset.id} onClick={() => !isBrowsingMode && onSelect(asset)} className={`aspect-square bg-black border border-zinc-700 rounded-lg overflow-hidden relative group ${isBrowsingMode ? '' : 'cursor-pointer hover:ring-2 hover:ring-blue-500'}`}>
                                                                 {asset.type === 'video' ? (
                                                                     <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-800">
                                                                         <Video size={48} className="text-zinc-600 mb-2" />
@@ -431,9 +531,9 @@ const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, initi
                                                                                                         ) : (
                                                                                                             <img src={asset.url} className="w-full h-full object-cover" loading="lazy" />
                                                                                                         )}                                                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">                                    <div className="absolute top-2 right-2">
-                                        <button onClick={(e) => handleDelete(e, asset.id)} className="p-1.5 bg-red-600 rounded-md text-white hover:bg-red-500 shadow-lg" title="Delete Asset"><Trash2 size={14}/></button>
+                                        <button onClick={(e) => handleDelete(e, asset.id, asset.file.name)} className="p-1.5 bg-red-600 rounded-md text-white hover:bg-red-500 shadow-lg" title="Delete Asset"><Trash2 size={14}/></button>
                                     </div>
-                                    {onSelect && (
+                                    {!isBrowsingMode && onSelect && (
                                         <span className="bg-blue-600 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg transform translate-y-4 group-hover:translate-y-0 transition-transform">Select</span>
                                     )}
                                 </div>
@@ -456,7 +556,7 @@ const LoadingScreen = () => (
             <div className="absolute -inset-20 bg-blue-600/10 rounded-full blur-[100px] animate-pulse"></div>
             
             <div className="relative w-[480px] mb-12">
-                <img src="/robotic T M.png" alt="Logo" className="w-full relative z-10 filter drop-shadow-2xl" />
+                <img src="/robotic_TM.png" alt="Logo" className="w-full relative z-10 filter drop-shadow-2xl" />
                 <div className="absolute inset-0 z-20 bg-gradient-to-r from-transparent via-white/20 to-transparent w-full h-full -skew-x-12 blur-sm animate-shimmer" style={{mixBlendMode: 'overlay'}}></div>
             </div>
         </div>
@@ -1047,15 +1147,25 @@ const Node = ({ id, type, x, y, label, selected, onDragStart, onHandleClick, dat
                 
                 {(type === 'image' || type === 'video') && (
                     <div className="space-y-2">
-                        <div className="w-full h-24 bg-black border border-zinc-700 rounded overflow-hidden flex items-center justify-center relative group">
+                        <div className={`w-full h-24 border border-zinc-700 rounded overflow-hidden flex flex-col items-center justify-center relative group transition-all duration-300 ${!data?.value ? 'bg-blue-600/10 border-blue-500/30' : 'bg-black'}`}>
                             {data?.value ? (
-                                type === 'video' ? <video src={data.value} className="w-full h-full object-contain" muted /> : <img src={data.value} className="w-full h-full object-contain" />
+                                <>
+                                    {type === 'video' ? <video src={data.value} className="w-full h-full object-contain" muted /> : <img src={data.value} className="w-full h-full object-contain" />}
+                                    <button onClick={() => onOpenAssetBrowser(type, (asset) => updateData(id, { value: asset.url, assetId: asset.id, name: asset.file.name }))} className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center text-sm transition-opacity font-bold">
+                                        <Upload size={16} className="mr-2"/> Change Media
+                                    </button>
+                                </>
                             ) : (
-                                <div className="text-gray-600 flex flex-col items-center"><Upload size={24}/></div>
+                                <button 
+                                    onClick={() => onOpenAssetBrowser(type, (asset) => updateData(id, { value: asset.url, assetId: asset.id, name: asset.file.name }))} 
+                                    className="w-full h-full flex flex-col items-center justify-center gap-2 bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 hover:text-white transition-all group"
+                                >
+                                    <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-900/40 group-hover:scale-110 transition-transform">
+                                        <Upload size={20} className="text-white"/>
+                                    </div>
+                                    <span className="text-[10px] font-bold uppercase tracking-widest">Load {type}</span>
+                                </button>
                             )}
-                            <button onClick={() => onOpenAssetBrowser(type, (asset) => updateData(id, { value: asset.url, assetId: asset.id, name: asset.file.name }))} className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center text-sm transition-opacity font-bold">
-                                <Upload size={16} className="mr-2"/> Load Media
-                            </button>
                         </div>
                     </div>
                 )}
@@ -1170,7 +1280,7 @@ const Node = ({ id, type, x, y, label, selected, onDragStart, onHandleClick, dat
     );
 };
 
-const NodeEditor = ({ activeSelection, currentCue, updateCueData, walls, setWalls, onOpenAssetBrowser }) => {
+const NodeEditor = ({ activeSelection, currentCue, updateCueData, walls, setWalls, onOpenAssetBrowser, showConfirm, showAlert }) => {
     const [nodes, setNodes] = useState([]);
     const [connections, setConnections] = useState([]);
     const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -1277,7 +1387,7 @@ const NodeEditor = ({ activeSelection, currentCue, updateCueData, walls, setWall
         if (!nodeToDelete) return;
 
         if (nodeToDelete.type === 'output') {
-            alert("Cannot delete an output node. To remove a wall, delete it from the Geometry panel.");
+            showAlert("Cannot delete an output node", "To remove a wall, delete it from the Geometry panel.");
             return;
         }
 
@@ -1593,7 +1703,7 @@ const TabSlider = ({ activeTab, onTabChange }) => {
 
 // --- SETTINGS MODAL ---
 
-const SettingsModal = ({ isOpen, onClose, lowResourceMode, setLowResourceMode }) => {
+const SettingsModal = ({ isOpen, onClose, lowResourceMode, setLowResourceMode, hiddenDrives = [], setHiddenDrives }) => {
     if (!isOpen) return null;
     return createPortal(
         <div className="fixed inset-0 z-[30000] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-scale">
@@ -1603,10 +1713,10 @@ const SettingsModal = ({ isOpen, onClose, lowResourceMode, setLowResourceMode })
                         <Settings className="text-blue-500" size={20} />
                         <h2 className="text-sm font-bold text-white tracking-[0.2em] uppercase">System Settings</h2>
                     </div>
-                    <img src="/robotic T M.png" alt="Logo" className="h-6 opacity-50" />
+                    <img src="/robotic_TM.png" alt="Logo" className="h-6 opacity-50" />
                 </div>
 
-                <div className="p-8 space-y-8">
+                <div className="p-8 space-y-8 overflow-y-auto max-h-[70vh]">
                     <div className="space-y-4">
                         <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Performance</h3>
                         <div className="flex items-center justify-between p-4 bg-zinc-950/30 rounded-lg border border-zinc-800 hover:border-zinc-700 transition-colors">
@@ -1622,6 +1732,34 @@ const SettingsModal = ({ isOpen, onClose, lowResourceMode, setLowResourceMode })
                             >
                                 <div className={`w-3 h-3 rounded-full bg-white transition-all duration-300 transform ${lowResourceMode ? 'translate-x-5' : 'translate-x-0'}`}></div>
                             </button>
+                        </div>
+                    </div>
+
+                    <div className="space-y-4">
+                        <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">External Storage</h3>
+                        <div className="bg-zinc-950/30 rounded-lg border border-zinc-800 p-4 space-y-3">
+                            <div className="flex flex-col gap-1 mb-2">
+                                <span className="text-xs font-bold text-gray-200 uppercase tracking-wider">Hidden Drives</span>
+                                <span className="text-[10px] text-zinc-600 font-medium">USB drives you have hidden from the main interface.</span>
+                            </div>
+                            
+                            {hiddenDrives.length === 0 ? (
+                                <div className="text-[10px] text-zinc-700 font-bold uppercase py-2 text-center border border-dashed border-zinc-800 rounded">No hidden drives</div>
+                            ) : (
+                                <div className="space-y-2">
+                                    {hiddenDrives.map(path => (
+                                        <div key={path} className="flex items-center justify-between bg-zinc-900 p-2 rounded border border-zinc-800">
+                                            <span className="text-[10px] font-mono text-zinc-400 truncate max-w-[300px]">{path}</span>
+                                            <button 
+                                                onClick={() => setHiddenDrives(prev => prev.filter(p => p !== path))}
+                                                className="text-[10px] font-bold text-blue-500 hover:text-white transition-colors"
+                                            >
+                                                UNHIDE
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -1672,7 +1810,41 @@ export default function App() {
     const [isLoading, setIsLoading] = useState(true);
     const [activeProjectId, setActiveProjectId] = useState(null);
     const [usbDrives, setUsbDrives] = useState([]);
+    const [hiddenDrives, setHiddenDrives] = useState(() => {
+        const saved = localStorage.getItem('emap_hidden_drives');
+        return saved ? JSON.parse(saved) : [];
+    });
     
+    useEffect(() => {
+        localStorage.setItem('emap_hidden_drives', JSON.stringify(hiddenDrives));
+    }, [hiddenDrives]);
+
+    // Handle Asset Deletion Consistency
+    useEffect(() => {
+        const handleAssetDeleted = (assetId, assetName) => {
+            setScenes(prevScenes => prevScenes.map(scene => ({
+                ...scene,
+                cues: scene.cues.map(cue => {
+                    if (!cue.nodes) return cue;
+                    let changed = false;
+                    const newNodes = cue.nodes.map(node => {
+                        const hasAssetId = node.data?.assetId === assetId;
+                        const hasUrlMatch = node.data?.value && (node.data.value === assetId || node.data.value.includes(encodeURIComponent(assetId)));
+                        if (hasAssetId || hasUrlMatch) {
+                            changed = true;
+                            return { ...node, data: { ...node.data, value: null, assetId: null, name: null } };
+                        }
+                        return node;
+                    });
+                    return changed ? { ...cue, nodes: newNodes } : cue;
+                })
+            })));
+            showAlert("Asset Removed", `The file "${assetName}" was removed from the library. Affected nodes have been updated.`);
+        };
+        window.onAssetDeleted = handleAssetDeleted;
+        return () => { window.onAssetDeleted = null; };
+    }, [showAlert]); // setScenes is stable
+
     useEffect(() => {
         localStorage.setItem('emap_low_resource_mode', lowResourceMode);
     }, [lowResourceMode]);
@@ -2078,12 +2250,19 @@ export default function App() {
     return (
         <div className={`w-full h-full relative font-sans text-white bg-zinc-950 flex flex-col ${lowResourceMode ? 'low-resource-mode' : ''}`}>
             {isLoading && <LoadingScreen />}
-            <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} lowResourceMode={lowResourceMode} setLowResourceMode={setLowResourceMode} />
+            <SettingsModal 
+                isOpen={showSettings} 
+                onClose={() => setShowSettings(false)} 
+                lowResourceMode={lowResourceMode} 
+                setLowResourceMode={setLowResourceMode} 
+                hiddenDrives={hiddenDrives}
+                setHiddenDrives={setHiddenDrives}
+            />
 
             {!isFullscreen && !navigator.userAgent.includes('QtWebEngine') && (
                 <div className="absolute inset-0 z-[100] bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center text-center p-8">
                     <div className="max-w-4xl space-y-8">
-                        <img src="/robotic T M.png" className="w-[600px] mx-auto mb-8" alt="Logo" />
+                        <img src="/robotic_TM.png" className="w-[600px] mx-auto mb-8" alt="Logo" />
                         <h1 className="text-5xl font-bold text-white mb-4">Emap</h1>
                         <button onClick={enterFullscreen} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-xl font-bold text-2xl flex items-center gap-3 mx-auto">
                             <Maximize size={28} /> Start
@@ -2093,7 +2272,16 @@ export default function App() {
             )}
 
                                 <ProjectManager isOpen={showProjectManager} onClose={() => setShowProjectManager(false)} activeProjectId={activeProjectId} showConfirm={showConfirm} showAlert={showAlert} setIsLoading={setIsLoading} />
-                                <AssetBrowser isOpen={assetBrowserState.isOpen} onClose={() => setAssetBrowserState({isOpen:false})} onSelect={(a) => {assetBrowserState.callback(a); setAssetBrowserState({isOpen:false})}} initialTab={assetBrowserState.type} showConfirm={showConfirm} showAlert={showAlert} />
+                                <AssetBrowser 
+                                    isOpen={assetBrowserState.isOpen} 
+                                    onClose={() => setAssetBrowserState({isOpen:false})} 
+                                    onSelect={(a) => {assetBrowserState.callback(a); setAssetBrowserState({isOpen:false})}} 
+                                    initialTab={assetBrowserState.type} 
+                                    showConfirm={showConfirm} 
+                                    showAlert={showAlert} 
+                                    hiddenDrives={hiddenDrives}
+                                    setHiddenDrives={setHiddenDrives}
+                                />
             <div className={`absolute inset-0 h-full z-0 ${!activeProjectId ? 'hidden' : ''}`}>
                 <div className="absolute inset-0 z-10" onClick={() => setActiveWallId(null)}>
                     <WallBackgroundLayer walls={walls} currentCueState={currentCueState} isLive={viewMode === 'live'} isTransitioning={transitionMix < 1} shouldShow={menuTab === 'scenes'} />
@@ -2102,9 +2290,19 @@ export default function App() {
                     {viewMode === '2d' && (
                         <div className="absolute top-4 left-4 pointer-events-none select-none drop-shadow-md z-50">
                             {menuTab === 'scenes' ? (
-                                <div className="bg-black/50 px-3 py-2 rounded-lg backdrop-blur-sm">
-                                    <div className="text-xs text-purple-300 font-bold uppercase tracking-wider">SCENE MODE</div>
-                                    <div className="text-lg font-bold text-white">Act {currentSceneIndex + 1} - Cue {currentCueIndex + 1}</div>
+                                <div className="flex items-center gap-4">
+                                    <div className="bg-black/50 px-3 py-2 rounded-lg backdrop-blur-sm">
+                                        <div className="text-xs text-purple-300 font-bold uppercase tracking-wider">SCENE MODE</div>
+                                        <div className="text-lg font-bold text-white">Act {currentSceneIndex + 1} - Cue {currentCueIndex + 1}</div>
+                                    </div>
+                                    {usbDrives.filter(d => !hiddenDrives.includes(d.path)).length > 0 && (
+                                        <button 
+                                            onClick={() => setAssetBrowserState({ isOpen: true, type: 'image', callback: () => {} })}
+                                            className="bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-2 animate-bounce-subtle shadow-lg shadow-orange-900/40 pointer-events-auto"
+                                        >
+                                            <Cable size={16} /> USB DETECTED ({usbDrives.filter(d => !hiddenDrives.includes(d.path)).length})
+                                        </button>
+                                    )}
                                 </div>
                             ) : (<>
                                 <div className="flex items-center gap-3">
@@ -2117,12 +2315,12 @@ export default function App() {
                                         </div>
                                     </div>
                                     
-                                    {usbDrives.length > 0 && (
+                                    {usbDrives.filter(d => !hiddenDrives.includes(d.path)).length > 0 && (
                                         <button 
                                             onClick={() => setAssetBrowserState({ isOpen: true, type: 'image', callback: () => {} })}
                                             className="bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-2 animate-bounce-subtle shadow-lg shadow-orange-900/40 pointer-events-auto"
                                         >
-                                            <Cable size={16} /> USB DETECTED ({usbDrives.length})
+                                            <Cable size={16} /> USB DETECTED ({usbDrives.filter(d => !hiddenDrives.includes(d.path)).length})
                                         </button>
                                     )}
                                 </div>
@@ -2131,6 +2329,8 @@ export default function App() {
                     )}
                 </div>
             </div>
+
+            {/* Redundant notification block removed */}
 
             {menuTab === 'scenes' && viewMode !== 'live' && showNodeEditor && (
                 <div 
@@ -2152,7 +2352,7 @@ export default function App() {
                         </div>
                     ) : (
                         <>
-                            {activeSelection.type === 'cue' ? <NodeEditor activeSelection={activeSelection} currentCue={currentCueObj} updateCueData={updateCueData} walls={walls} setWalls={setWalls} onOpenAssetBrowser={(type, cb) => setAssetBrowserState({isOpen:true, type, callback:cb})} /> : <TransitionEditor cue={currentCueObj} updateCue={updateCueData} />}
+                            {activeSelection.type === 'cue' ? <NodeEditor activeSelection={activeSelection} currentCue={currentCueObj} updateCueData={updateCueData} walls={walls} setWalls={setWalls} showConfirm={showConfirm} showAlert={showAlert} onOpenAssetBrowser={(type, cb) => setAssetBrowserState({isOpen:true, type, callback:cb})} /> : <TransitionEditor cue={currentCueObj} updateCue={updateCueData} />}
                         </>
                     )}
                 </div>
@@ -2312,7 +2512,7 @@ export default function App() {
                                 <div className="mt-4 pt-4 border-t border-zinc-800/50 flex flex-col gap-2">
                                     <button onClick={() => setShowProjectManager(true)} className="w-full bg-zinc-800/50 hover:bg-zinc-800 text-zinc-400 hover:text-white py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 border border-zinc-700 transition-all"><Database size={14}/> Project Manager</button>
                                     <button 
-                                        onClick={() => setAssetBrowserState({ isOpen: true, type: 'image', callback: () => {} })} 
+                                        onClick={() => setAssetBrowserState({ isOpen: true, type: 'all', callback: null })} 
                                         className="w-full bg-zinc-800/50 hover:bg-zinc-800 text-zinc-400 hover:text-white py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 border border-zinc-700 transition-all"
                                     >
                                         <Folder size={14}/> Asset Library

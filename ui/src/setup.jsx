@@ -41,7 +41,7 @@ function Setup() {
 
     return (
         <div className="flex flex-col items-center justify-center h-screen space-y-8 bg-zinc-900 text-white font-sans">
-            <img src="/robotic T M.png" alt="Logo" className="w-64" />
+            <img src="/robotic_TM.png" alt="Logo" className="w-64" />
             <h1 className="text-2xl font-bold">Multi-Monitor Setup</h1>
             <p className="text-gray-400">Select the monitor you want to be your Control Panel.</p>
             

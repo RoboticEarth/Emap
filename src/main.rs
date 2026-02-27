@@ -32,7 +32,7 @@ struct AppState {
 }
 
 #[derive(Serialize, Deserialize)]
-struct AssetMeta { id: String, name: String, mime_type: String }
+struct AssetMeta { id: String, name: String, path: String, mime_type: String }
 
 #[derive(Serialize, Deserialize)]
 struct ProjectMeta { id: String, name: String, created_at: String }
@@ -411,8 +411,8 @@ async fn list_assets(data: web::Data<AppState>) -> impl Responder {
     let res = web::block(move || {
         let db_guard = data.project_db.lock().unwrap();
         let conn = match &*db_guard { Some(c) => c, None => return Vec::new() };
-        let mut stmt = conn.prepare("SELECT id, name, mime_type FROM assets").unwrap();
-        let assets_iter = stmt.query_map([], |row| Ok(AssetMeta { id: row.get(0)?, name: row.get(1)?, mime_type: row.get(2)? })).unwrap();
+        let mut stmt = conn.prepare("SELECT id, name, path, mime_type FROM assets").unwrap();
+        let assets_iter = stmt.query_map([], |row| Ok(AssetMeta { id: row.get(0)?, name: row.get(1)?, path: row.get(2)?, mime_type: row.get(3)? })).unwrap();
         assets_iter.map(|x| x.unwrap()).collect::<Vec<AssetMeta>>()
     }).await;
     match res { Ok(assets) => HttpResponse::Ok().json(assets), Err(_) => HttpResponse::InternalServerError().finish() }
@@ -459,22 +459,60 @@ struct ImportRequest { path: String, overwrite: Option<bool> }
 struct DeleteFileRequest { path: String }
 
 #[post("/api/fs/delete")]
-async fn delete_fs_file(req: web::Json<DeleteFileRequest>) -> impl Responder {
-    let path = PathBuf::from(&req.path);
-    println!("[BACKEND] Request to delete file: {:?}", path);
+async fn delete_fs_file(data: web::Data<AppState>, req: web::Json<DeleteFileRequest>) -> impl Responder {
+    let path_str = req.path.clone();
+    let path = PathBuf::from(&path_str);
+    println!("[BACKEND] Request to delete file from disk: {:?}", path);
     
-    // Safety: Only allow deleting files in known asset areas or USB drives
-    // For now, we trust the path but could add more guards.
     let res = web::block(move || {
-        if path.is_dir() {
+        // 1. Delete from Disk
+        let disk_res = if path.is_dir() {
             fs::remove_dir_all(&path)
         } else {
             fs::remove_file(&path)
+        };
+
+        if disk_res.is_ok() {
+            // 2. Remove from active project library if it was linked
+            let db_guard = data.project_db.lock().unwrap();
+            if let Some(conn) = &*db_guard {
+                let _ = conn.execute("DELETE FROM assets WHERE path = ?1", params![path_str]);
+            }
         }
+        disk_res
     }).await;
 
     match res {
         Ok(Ok(_)) => HttpResponse::Ok().finish(),
+        _ => HttpResponse::InternalServerError().finish()
+    }
+}
+
+#[post("/api/fs/copy_to_assets")]
+async fn copy_to_assets(req: web::Json<ImportRequest>) -> impl Responder {
+    let src = PathBuf::from(&req.path);
+    println!("[BACKEND] Copy to assets request: {:?}", src);
+    
+    if !src.exists() { return HttpResponse::NotFound().finish(); }
+    
+    let res = web::block(move || {
+        let name = src.file_name().ok_or("Invalid filename")?;
+        let run_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let assets_dir = run_dir.join("assets");
+        let _ = fs::create_dir_all(&assets_dir);
+        let dest = assets_dir.join(name);
+        
+        if dest.exists() && !req.overwrite.unwrap_or(false) {
+            return Err("Conflict");
+        }
+        
+        fs::copy(&src, &dest).map_err(|_| "Copy failed")?;
+        Ok(())
+    }).await;
+
+    match res {
+        Ok(Ok(_)) => HttpResponse::Ok().finish(),
+        Ok(Err("Conflict")) => HttpResponse::Conflict().finish(),
         _ => HttpResponse::InternalServerError().finish()
     }
 }
@@ -520,65 +558,116 @@ async fn get_drives() -> impl Responder {
 async fn import_asset(data: web::Data<AppState>, req: web::Json<ImportRequest>) -> impl Responder {
     let req_path = req.path.clone();
     let overwrite = req.overwrite.unwrap_or(false);
-    println!("[BACKEND] Import request: {} (overwrite: {})", req_path, overwrite);
+    println!("[BACKEND] Import request (link existing): {} (overwrite: {})", req_path, overwrite);
+    
     let res = web::block(move || {
         let src = PathBuf::from(&req_path);
         if !src.exists() { return Err("File not found".to_string()); }
-        let name = src.file_name().unwrap().to_string_lossy().to_string();
-        let run_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let assets_dir = run_dir.join("assets");
-        let dest = assets_dir.join(&name);
         
-        if dest.exists() && !overwrite {
+        let name = src.file_name().unwrap().to_string_lossy().to_string();
+        let mime_type = mime_guess::from_path(&src).first_or_octet_stream().to_string();
+        
+        let db_guard = data.project_db.lock().unwrap();
+        let conn = match &*db_guard { Some(c) => c, None => return Err("No project".to_string()) };
+        
+        // Check for existing link
+        let existing_id: Option<String> = conn.query_row(
+            "SELECT id FROM assets WHERE path = ?1", 
+            params![req_path], 
+            |r| r.get(0)
+        ).ok();
+
+        if existing_id.is_some() && !overwrite {
             return Err("Conflict".to_string());
         }
 
-        if src.parent().map(|p| p != assets_dir).unwrap_or(true) { fs::copy(&src, &dest).map_err(|e| e.to_string())?; }
-        let mime_type = mime_guess::from_path(&dest).first_or_octet_stream().to_string();
-        let db_guard = data.project_db.lock().unwrap();
-        let conn = match &*db_guard { Some(c) => c, None => return Err("No project".to_string()) };
-        conn.execute("INSERT OR REPLACE INTO assets (id, name, mime_type) VALUES (?1, ?2, ?3)", params![name, name, mime_type]).unwrap();
-        Ok(name)
+        let asset_id = existing_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        
+        conn.execute(
+            "INSERT OR REPLACE INTO assets (id, name, path, mime_type) VALUES (?1, ?2, ?3, ?4)", 
+            params![asset_id, name, req_path, mime_type]
+        ).map_err(|e| e.to_string())?;
+        
+        Ok(asset_id)
     }).await;
+
     match res { 
-        Ok(Ok(name)) => HttpResponse::Ok().json(serde_json::json!({ "status": "imported", "id": name })),
-        Ok(Err(e)) if e == "Conflict" => HttpResponse::Conflict().body("File already exists"),
+        Ok(Ok(id)) => HttpResponse::Ok().json(serde_json::json!({ "status": "imported", "id": id })),
+        Ok(Err(e)) if e == "Conflict" => HttpResponse::Conflict().body("File already linked"),
         _ => HttpResponse::InternalServerError().finish() 
     }
 }
 
 #[post("/api/asset/{id}")]
 async fn save_asset(data: web::Data<AppState>, id: web::Path<String>, req: HttpRequest, mut payload: web::Payload) -> impl Responder {
+    // For direct uploads, we still save to the assets folder and link it
     let filename = req.headers().get("X-Asset-Name").and_then(|h| h.to_str().ok()).map(|s| s.to_string()).unwrap_or_else(|| id.into_inner());
     let safe_filename = Path::new(&filename).file_name().unwrap_or_default().to_string_lossy().to_string();
-    let file_path = format!("assets/{}", safe_filename);
-    let mut f = fs::File::create(&file_path).unwrap();
-    while let Some(chunk) = payload.next().await { f.write_all(&chunk.unwrap()).unwrap(); }
-    let safe_filename_clone = safe_filename.clone();
+    
+    let run_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let assets_dir = run_dir.join("assets");
+    let _ = fs::create_dir_all(&assets_dir);
+    let file_path = assets_dir.join(&safe_filename);
+    let path_str = file_path.to_string_lossy().to_string();
+
+    let mut f = match fs::File::create(&file_path) {
+        Ok(f) => f,
+        Err(e) => {
+            println!("[BACKEND ERROR] Failed to create file: {}", e);
+            return HttpResponse::InternalServerError().finish();
+        }
+    };
+
+    while let Some(chunk) = payload.next().await { 
+        if let Ok(data) = chunk {
+            f.write_all(&data).unwrap(); 
+        }
+    }
+
     let res = web::block(move || {
         let mime_type = mime_guess::from_path(&file_path).first_or_octet_stream().to_string();
         let db_guard = data.project_db.lock().unwrap();
         let conn = match &*db_guard { Some(c) => c, None => return false };
-        conn.execute("INSERT OR REPLACE INTO assets (id, name, mime_type) VALUES (?1, ?2, ?3)", params![safe_filename_clone, safe_filename_clone, mime_type]).is_ok()
+        let asset_id = Uuid::new_v4().to_string();
+        conn.execute("INSERT OR REPLACE INTO assets (id, name, path, mime_type) VALUES (?1, ?2, ?3, ?4)", params![asset_id, safe_filename, path_str, mime_type]).is_ok()
     }).await;
-    if res.unwrap() { HttpResponse::Ok().finish() } else { HttpResponse::InternalServerError().finish() }
+
+    if res.unwrap_or(false) { HttpResponse::Ok().finish() } else { HttpResponse::InternalServerError().finish() }
 }
 
 #[get("/api/asset/{id}")]
-async fn get_asset(req: HttpRequest, id: web::Path<String>) -> impl Responder {
-    let file_path = format!("assets/{}", id.into_inner());
-    match NamedFile::open_async(file_path).await { Ok(file) => file.into_response(&req), Err(_) => HttpResponse::NotFound().finish() }
+async fn get_asset(data: web::Data<AppState>, req: HttpRequest, id: web::Path<String>) -> impl Responder {
+    let asset_id = id.into_inner();
+    
+    let path_res = web::block(move || {
+        let db_guard = data.project_db.lock().unwrap();
+        let conn = match &*db_guard { Some(c) => c, None => return None };
+        conn.query_row("SELECT path FROM assets WHERE id = ?1", params![asset_id], |r| r.get::<_, String>(0)).ok()
+    }).await;
+
+    let file_path = match path_res {
+        Ok(Some(p)) => p,
+        _ => return HttpResponse::NotFound().finish()
+    };
+
+    match NamedFile::open_async(file_path).await { 
+        Ok(file) => file.into_response(&req), 
+        Err(_) => HttpResponse::NotFound().finish() 
+    }
 }
 
 #[delete("/api/asset/{id}")]
 async fn delete_asset(data: web::Data<AppState>, id: web::Path<String>) -> impl Responder {
-    let filename = id.into_inner();
+    let asset_id = id.into_inner();
+    println!("[BACKEND] Request to remove asset from library (NOT disk): {}", asset_id);
+    
     let res = web::block(move || {
         let db_guard = data.project_db.lock().unwrap();
         let conn = match &*db_guard { Some(c) => c, None => return false };
-        conn.execute("DELETE FROM assets WHERE id = ?1", params![filename]).is_ok()
+        conn.execute("DELETE FROM assets WHERE id = ?1", params![asset_id]).is_ok()
     }).await;
-    if res.unwrap() { HttpResponse::Ok().finish() } else { HttpResponse::InternalServerError().finish() }
+
+    if res.unwrap_or(false) { HttpResponse::Ok().finish() } else { HttpResponse::InternalServerError().finish() }
 }
 
 fn init_project_db(id: &str) -> Result<Connection, rusqlite::Error> {
@@ -604,7 +693,21 @@ fn init_project_db(id: &str) -> Result<Connection, rusqlite::Error> {
     }
 
     conn.execute("CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT)", [])?;
-    conn.execute("CREATE TABLE IF NOT EXISTS assets (id TEXT PRIMARY KEY, name TEXT, mime_type TEXT)", [])?;
+    conn.execute("CREATE TABLE IF NOT EXISTS assets (id TEXT PRIMARY KEY, name TEXT, path TEXT, mime_type TEXT)", [])?;
+    
+    // Migration: Add path column if it doesn't exist (for existing projects)
+    let has_path_col: bool = conn.query_row(
+        "SELECT count(*) FROM pragma_table_info('assets') WHERE name='path'",
+        [],
+        |r| r.get::<_, i64>(0)
+    ).unwrap_or(0) > 0;
+
+    if !has_path_col {
+        println!("[DB] Migrating project {} assets table: adding path column", id);
+        let _ = conn.execute("ALTER TABLE assets ADD COLUMN path TEXT", []);
+        // For existing local assets, we can try to infer the path if it was in the assets folder
+        let _ = conn.execute("UPDATE assets SET path = 'assets/' || name WHERE path IS NULL", []);
+    }
     
     Ok(conn)
 }
@@ -692,7 +795,7 @@ fn main() {
                     .service(load_project).service(get_active_project).service(get_kv).service(save_kv).service(list_assets)
                     .service(sync_all)
                     .service(list_files).service(import_asset).service(save_asset).service(get_asset).service(delete_asset)
-                    .service(get_drives).service(delete_fs_file)
+                    .service(get_drives).service(delete_fs_file).service(copy_to_assets)
                     .service(Files::new("/", "./ui/dist").index_file("index.html"))
             })
             .bind(("0.0.0.0", 8080)).unwrap();
