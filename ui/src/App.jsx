@@ -13,7 +13,8 @@ const {
     Axis3d, MousePointer2, Clapperboard, Image: ImageIcon, Upload, 
     Play, SkipBack, SkipForward, LayoutTemplate, MonitorOff, Film, 
     Timer, Activity, Layers, Workflow, Link, X, Cable, Maximize, 
-    AlertTriangle, HardDrive, Database, Video, Blend, File, FolderPlus 
+    AlertTriangle, HardDrive, Database, Video, Blend, File, FolderPlus,
+    Hash, Filter, Tags
 } = Icons;
 
 // --- SHARED UI COMPONENTS ---
@@ -52,6 +53,109 @@ const ConflictModal = ({ isOpen, fileName, onKeepOld, onKeepNew, applyToAll, set
     );
 };
 
+const InlineTagEditor = ({ path, tags, onTagsUpdated, allUniqueTags, canTag = true }) => {
+    const [isEditing, setIsEditing] = useState(false);
+    const [newTag, setNewTag] = useState('');
+    const containerRef = useRef(null);
+
+    useEffect(() => {
+        const handleClickOutside = (e) => {
+            if (containerRef.current && !containerRef.current.contains(e.target)) {
+                setIsEditing(false);
+                setNewTag('');
+            }
+        };
+        if (isEditing) document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [isEditing]);
+
+    const handleAdd = async (tagName) => {
+        if (!canTag) return;
+        const tag = (tagName || newTag).trim().toLowerCase();
+        if (!tag) return;
+        
+        if (await db.addTag(path, tag)) {
+            onTagsUpdated([...tags, tag]);
+            setNewTag('');
+        }
+    };
+
+    const handleRemove = async (tag) => {
+        if (!canTag) return;
+        if (await db.removeTag(path, tag)) {
+            onTagsUpdated(tags.filter(t => t !== tag));
+        }
+    };
+
+    if (!canTag) return null;
+
+    const suggestions = allUniqueTags.filter(t => !tags.includes(t) && t.includes(newTag.toLowerCase())).slice(0, 3);
+
+    return (
+        <div className="w-full mt-1 px-1" onClick={e => e.stopPropagation()} ref={containerRef}>
+            {!isEditing ? (
+                <div className="flex flex-wrap gap-1 min-h-[18px] items-center">
+                    <button 
+                        onClick={() => setIsEditing(true)}
+                        className="p-0.5 rounded bg-zinc-800 text-zinc-500 hover:text-white hover:bg-blue-600 transition-all"
+                        title="Add Tags"
+                    >
+                        <Hash size={10} strokeWidth={3}/>
+                    </button>
+                    {tags.map(tag => (
+                        <span key={tag} className="bg-blue-600/20 text-blue-400 text-[7px] font-black uppercase px-1 py-0.5 rounded border border-blue-500/20 flex items-center gap-1 group/tag">
+                            {tag}
+                            <button onClick={() => handleRemove(tag)} className="hover:text-white"><X size={6} strokeWidth={4}/></button>
+                        </span>
+                    ))}
+                </div>
+            ) : (
+                <div className="space-y-1.5 py-1">
+                    <div className="flex gap-1">
+                        <input 
+                            type="text" 
+                            autoFocus
+                            value={newTag} 
+                            onChange={e => setNewTag(e.target.value)}
+                            onKeyDown={e => {
+                                if (e.key === 'Enter') { handleAdd(); e.preventDefault(); }
+                                if (e.key === 'Escape') { setIsEditing(false); setNewTag(''); }
+                            }}
+                            placeholder="TAG..." 
+                            className="flex-1 bg-zinc-950 border border-blue-500 rounded px-1.5 py-1 text-[9px] text-white font-bold outline-none uppercase shadow-[0_0_10px_rgba(59,130,246,0.2)]"
+                        />
+                        <button onClick={() => { setIsEditing(false); setNewTag(''); }} className="p-1 text-zinc-500 hover:text-white"><X size={10}/></button>
+                    </div>
+                    
+                    {/* Tags display while editing */}
+                    <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto pr-1">
+                        {tags.map(tag => (
+                            <span key={tag} className="bg-blue-600/30 text-blue-300 text-[7px] font-black uppercase px-1.5 py-0.5 rounded border border-blue-500/30 flex items-center gap-1">
+                                {tag}
+                                <button onClick={() => handleRemove(tag)} className="hover:text-white"><X size={6} strokeWidth={4}/></button>
+                            </span>
+                        ))}
+                    </div>
+
+                    {newTag && suggestions.length > 0 && (
+                        <div className="flex flex-col bg-zinc-950 border border-zinc-800 rounded shadow-xl overflow-hidden">
+                            {suggestions.map(s => (
+                                <button 
+                                    key={s} 
+                                    onClick={() => { handleAdd(s); }}
+                                    className="text-left px-2 py-1.5 text-[8px] font-black text-zinc-400 hover:bg-blue-600 hover:text-white uppercase border-b border-zinc-900 last:border-0 transition-colors"
+                                >
+                                    {s}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+};
+
 const HandleCircle = ({ type, title, top, active, onClick }) => {
     let colorClasses = '';
     if (type === 'output') {
@@ -77,7 +181,42 @@ const HandleCircle = ({ type, title, top, active, onClick }) => {
     );
 };
 
-const PointHandle = ({ x, y, index, color, isSelected, onDrag, isMoveMode }) => {
+const GroupTransformHandle = ({ x, y, onDrag }) => {
+    const [isDragging, setIsDragging] = useState(false);
+    const startPos = useRef({ x: 0, y: 0 });
+
+    useEffect(() => {
+        if (isDragging) {
+            const handleMouseMove = (e) => {
+                const dx = e.clientX - startPos.current.x;
+                const dy = e.clientY - startPos.current.y;
+                onDrag(dx, dy);
+                startPos.current = { x: e.clientX, y: e.clientY };
+            };
+            const handleMouseUp = () => setIsDragging(false);
+            window.addEventListener('mousemove', handleMouseMove);
+            window.addEventListener('mouseup', handleMouseUp);
+            return () => {
+                window.removeEventListener('mousemove', handleMouseMove);
+                window.removeEventListener('mouseup', handleMouseUp);
+            };
+        }
+    }, [isDragging, onDrag]);
+
+    return (
+        <rect 
+            x={x - 6} y={y - 6} width={12} height={12} fill="white" stroke="black" strokeWidth={1}
+            className="cursor-move pointer-events-auto"
+            onMouseDown={(e) => {
+                e.stopPropagation();
+                startPos.current = { x: e.clientX, y: e.clientY };
+                setIsDragging(true);
+            }}
+        />
+    );
+};
+
+const PointHandle = ({ x, y, index, color, isSelected, onDrag, isMoveMode, isScaleMode, type = 'corner' }) => {
     const [isDragging, setIsDragging] = useState(false);
     useEffect(() => {
         if (isDragging) {
@@ -91,12 +230,25 @@ const PointHandle = ({ x, y, index, color, isSelected, onDrag, isMoveMode }) => 
             };
         }
     }, [isDragging]);
+    
+    const handleColor = isMoveMode ? "#fb923c" : (isScaleMode ? "#22d3ee" : color);
+    const isCorner = type === 'corner';
+    
     return (
-        <g transform={`translate(${x}, ${y})`} style={{ cursor: isMoveMode ? 'move' : (isSelected ? 'move' : 'default') }} onMouseDown={(e) => { if(isSelected) { e.stopPropagation(); setIsDragging(true); } }} onClick={(e) => e.stopPropagation()}>
-            <circle r="30" fill="transparent" />
-            <circle r="12" fill={isMoveMode ? "#fb923c" : color} fillOpacity={isSelected ? 0.3 : 0.1} />
-            <circle r={isSelected ? 6 : 4} fill={isMoveMode ? "#fb923c" : color} stroke="black" strokeWidth="1" />
-            {isSelected && <text x="15" y="5" fill="white" fontSize="10" className="no-select font-mono pointer-events-none">P{index + 1}</text>}
+        <g transform={`translate(${x}, ${y})`} style={{ cursor: (isMoveMode || isScaleMode) ? 'move' : (isSelected ? 'move' : 'default') }} onMouseDown={(e) => { if(isSelected) { e.stopPropagation(); setIsDragging(true); } }} onClick={(e) => e.stopPropagation()}>
+            <circle r="25" fill="transparent" />
+            {isCorner ? (
+                <>
+                    <circle r="12" fill={handleColor} fillOpacity={isSelected ? 0.3 : 0.1} />
+                    <circle r={isSelected ? 6 : 4} fill={handleColor} stroke="black" strokeWidth="1" />
+                </>
+            ) : (
+                <>
+                    <rect x="-8" y="-8" width="16" height="16" transform="rotate(45)" fill={handleColor} fillOpacity={isSelected ? 0.4 : 0.2} />
+                    <rect x="-4" y="-4" width="8" height="8" transform="rotate(45)" fill={handleColor} stroke="black" strokeWidth="1" />
+                </>
+            )}
+            {isSelected && isCorner && <text x="15" y="5" fill="white" fontSize="10" className="no-select font-mono pointer-events-none">P{index + 1}</text>}
         </g>
     );
 };
@@ -133,6 +285,12 @@ const FileExplorer = ({ isOpen, onClose, onImport, showConfirm, showAlert, hidde
     const [drives, setDrives] = useState([]);
     const [activeTab, setActiveTab] = useState('server'); // 'server' or drive path
     
+    // Tagging and Filtering State
+    const [allUniqueTags, setAllUniqueTags] = useState([]);
+    const [tagFilter, setTagFilter] = useState('all');
+    const [groupByTag, setGroupByTag] = useState(false);
+    const [expandedTag, setExpandedTag] = useState(null);
+
     // Conflict state
     const [conflict, setConflict] = useState(null); // { path, name }
     const [applyToAll, setApplyToAll] = useState(false);
@@ -142,8 +300,14 @@ const FileExplorer = ({ isOpen, onClose, onImport, showConfirm, showAlert, hidde
         if (isOpen) {
             loadDrives();
             loadPath('');
+            loadAllTags();
         }
     }, [isOpen]);
+
+    const loadAllTags = async () => {
+        const tags = await db.getAllUniqueTags();
+        setAllUniqueTags(tags);
+    };
 
     const loadDrives = async () => {
         const d = await db.getDrives();
@@ -157,11 +321,72 @@ const FileExplorer = ({ isOpen, onClose, onImport, showConfirm, showAlert, hidde
             setCurrentPath(data.path);
             setItems(data.items || []);
             setSelectedPaths([]);
+            setExpandedTag(null);
         } catch (e) {
             console.error(e);
         }
         setLoading(false);
     };
+
+    const onTagsUpdated = (path, newTags) => {
+        setItems(prev => prev.map(item => item.path === path ? { ...item, tags: newTags } : item));
+        loadAllTags();
+    };
+
+    const filteredItems = useMemo(() => {
+        if (tagFilter === 'all') return items;
+        if (tagFilter === 'untagged') return items.filter(i => i.type !== 'file' || !i.tags || i.tags.length === 0);
+        return items.filter(i => i.type !== 'file' || (i.tags && i.tags.includes(tagFilter)));
+    }, [items, tagFilter]);
+
+    const groupedItems = useMemo(() => {
+        if (!groupByTag) return filteredItems;
+
+        const result = [];
+        const untagged = [];
+        const tagGroups = {};
+
+        filteredItems.forEach(item => {
+            if (item.type !== 'file') {
+                result.push(item);
+                return;
+            }
+            if (!item.tags || item.tags.length === 0) {
+                untagged.push(item);
+            } else {
+                item.tags.forEach(tag => {
+                    if (tagFilter !== 'all' && tag !== tagFilter) return;
+                    if (!tagGroups[tag]) tagGroups[tag] = [];
+                    tagGroups[tag].push(item);
+                });
+            }
+        });
+
+        // Add tag "folders"
+        Object.keys(tagGroups).sort().forEach(tag => {
+            result.push({
+                type: 'tag_group',
+                name: tag,
+                tag: tag,
+                items: tagGroups[tag],
+                path: `tag:${tag}`
+            });
+        });
+
+        if (untagged.length > 0) {
+            result.push({
+                type: 'tag_group',
+                name: 'Untagged',
+                tag: 'untagged',
+                items: untagged,
+                path: 'tag:untagged'
+            });
+        }
+
+        return result;
+    }, [filteredItems, groupByTag, tagFilter]);
+
+    const displayItems = expandedTag ? (groupedItems.find(g => g.path === expandedTag)?.items || []) : groupedItems;
 
     const toggleSelect = (path) => {
         setSelectedPaths(prev => 
@@ -380,8 +605,35 @@ const FileExplorer = ({ isOpen, onClose, onImport, showConfirm, showAlert, hidde
                 </div>
 
                 <div className="p-2 bg-zinc-900/50 flex justify-between items-center border-b border-zinc-800">
-                    <div className="text-[10px] text-gray-500 font-mono truncate px-2">{currentPath || 'Root'}</div>
-                    <div className="flex gap-2">
+                    <div className="flex items-center gap-3 overflow-hidden flex-1">
+                        <button onClick={() => expandedTag ? setExpandedTag(null) : loadPath('')} className="p-1 hover:bg-zinc-800 rounded text-gray-400" title="Go Back"><SkipBack size={14}/></button>
+                        <div className="text-[10px] text-gray-500 font-mono truncate px-1 italic">
+                            {expandedTag ? `TAG: ${expandedTag.split(':')[1].toUpperCase()}` : currentPath || 'Root'}
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <CustomSelect 
+                            value={tagFilter} 
+                            onChange={val => { setTagFilter(val); setExpandedTag(null); }}
+                            buttonClassName="bg-zinc-950 border-zinc-800 px-3 py-1 text-[9px] font-bold uppercase min-w-[120px]"
+                            options={[
+                                { value: "all", label: "ALL TAGS" },
+                                { value: "untagged", label: "UNTAGGED" },
+                                ...allUniqueTags.map(tag => ({ value: tag, label: tag.toUpperCase() }))
+                            ]}
+                        />
+
+                        <button 
+                            onClick={() => { setGroupByTag(!groupByTag); setExpandedTag(null); }}
+                            className={`flex items-center gap-1 px-2 py-1 rounded border transition-all ${groupByTag ? 'bg-blue-600 border-blue-500 text-white' : 'bg-zinc-950 border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}
+                            title="Group by Tag"
+                        >
+                            <Tags size={10}/>
+                            <span className="text-[9px] font-black uppercase tracking-tight">Group</span>
+                        </button>
+
+                        <div className="w-[1px] h-4 bg-zinc-800 mx-1"></div>
+
                         {selectedPaths.length > 0 && (
                             <button onClick={handleDeleteSelected} className="text-[10px] font-bold text-red-500 hover:text-red-400 px-2 py-1 flex items-center gap-1 border border-red-900/30 rounded bg-red-900/10 transition-colors mr-2">
                                 <Trash2 size={10}/> Delete Selected ({selectedPaths.length})
@@ -408,10 +660,14 @@ const FileExplorer = ({ isOpen, onClose, onImport, showConfirm, showAlert, hidde
 
                 <div className="flex-1 overflow-y-auto p-4">
                     <div className="grid grid-cols-4 md:grid-cols-5 gap-3">
-                            {items.map((item, i) => ( 
+                            {displayItems.map((item, i) => ( 
                                 <div 
-                                    key={i} 
-                                    onClick={() => item.type === 'file' ? toggleSelect(item.path) : loadPath(item.path)} 
+                                    key={item.path || i} 
+                                    onClick={() => {
+                                        if (item.type === 'tag_group') setExpandedTag(item.path);
+                                        else if (item.type === 'file') toggleSelect(item.path);
+                                        else loadPath(item.path);
+                                    }} 
                                     className={`flex flex-col items-center p-2 rounded-lg cursor-pointer transition-all relative ${selectedPaths.includes(item.path) ? 'bg-blue-600/20 ring-2 ring-blue-500' : 'hover:bg-zinc-800'}`}
                                 > 
                                     {selectedPaths.includes(item.path) && (
@@ -437,7 +693,6 @@ const FileExplorer = ({ isOpen, onClose, onImport, showConfirm, showAlert, hidde
                                                         onError={(e) => {
                                                             const isImage = (item.name.toLowerCase().endsWith('.jpg') || item.name.toLowerCase().endsWith('.png') || item.name.toLowerCase().endsWith('.jpeg') || item.name.toLowerCase().endsWith('.webp'));
                                                             if (isImage && activeTab === 'server') {
-                                                                // Show processing overlay instead of broken image
                                                                 e.target.style.display = 'none';
                                                                 if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
                                                             } else {
@@ -453,28 +708,51 @@ const FileExplorer = ({ isOpen, onClose, onImport, showConfirm, showAlert, hidde
                                                 </div>
                                             </div>
                                         ) : null}
-                                        <div style={{display: item.type === 'file' ? 'none' : 'block'}}>
+                                        <div style={{display: (item.type === 'file' || item.type === 'tag_group') ? 'none' : 'block'}}>
                                             {item.type === 'dir' || item.type === 'drive' ? ( 
                                                 <Folder size={40} className={item.type === 'drive' ? "text-orange-400" : "text-yellow-500 shadow-lg"} /> 
                                             ) : ( 
                                                 <File size={40} className="text-zinc-600" /> 
                                             )}
                                         </div>
-                                        {/* Quick Delete for files/dirs (not drives) */}
-                                        {item.type !== 'drive' && (
+
+                                        {item.type === 'tag_group' && (
+                                            <div className="relative flex flex-col items-center group/folder">
+                                                <Folder size={48} className="text-orange-500/80 group-hover/folder:text-orange-400 transition-colors" />
+                                                <div className="absolute inset-0 flex items-center justify-center pt-2">
+                                                    <Tags size={20} className="text-white opacity-80" />
+                                                </div>
+                                                <div className="absolute -top-1 -right-1 bg-zinc-900 border border-zinc-700 px-1.5 py-0.5 rounded-full text-[8px] font-black text-white shadow-lg">
+                                                    {item.items.length}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Quick Delete for files/dirs (not drives/tag_groups) */}
+                                        {item.type !== 'drive' && item.type !== 'tag_group' && (
                                             <button 
                                                 onClick={(e) => handleDeleteItem(e, item.path, item.name)}
-                                                className="absolute top-1 left-1 p-1 bg-red-600/80 hover:bg-red-600 text-white rounded opacity-0 group-hover/item:opacity-100 transition-opacity z-20"
+                                                className="absolute top-1 right-1 p-1 bg-red-600/80 hover:bg-red-600 text-white rounded opacity-0 group-hover/item:opacity-100 transition-opacity z-20"
                                                 title="Delete from disk"
                                             >
                                                 <Trash2 size={12}/>
                                             </button>
                                         )}
                                     </div>
-                                    <span className="text-[10px] font-bold text-gray-300 truncate w-full text-center px-1" title={item.name}>{item.name}</span> 
+                                    <span className="text-[10px] font-bold text-gray-300 truncate w-full text-center px-1 uppercase tracking-tight" title={item.name}>{item.name}</span> 
+                                    
+                                    {item.type === 'file' && (
+                                        <InlineTagEditor 
+                                            path={item.path} 
+                                            tags={item.tags || []} 
+                                            onTagsUpdated={(newTags) => onTagsUpdated(item.path, newTags)}
+                                            allUniqueTags={allUniqueTags}
+                                            canTag={activeTab === 'server'}
+                                        />
+                                    )}
                                 </div> 
                             ))}
-                            {items.length === 0 && <div className="col-span-full text-center p-12 text-gray-600 text-xs font-bold uppercase tracking-widest opacity-50">Empty Directory</div>}
+                            {displayItems.length === 0 && <div className="col-span-full text-center p-12 text-gray-600 text-xs font-bold uppercase tracking-widest opacity-50">Empty Directory</div>}
                     </div>
                 </div>
                 
@@ -506,37 +784,42 @@ const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, hidde
 
     const [showFileExplorer, setShowFileExplorer] = useState(false);
 
+    // Tagging and Filtering State
+    const [allUniqueTags, setAllUniqueTags] = useState([]);
+    const [tagFilter, setTagFilter] = useState('all');
+    const [groupByTag, setGroupByTag] = useState(false);
+    const [expandedTag, setExpandedTag] = useState(null);
+
     // If initialTab is 'all', it means we are in browsing mode and should show both tabs
     const isBrowsingMode = initialTab === 'all';
 
     useEffect(() => {
-
         if (isOpen) {
-
             setActiveTab(isBrowsingMode ? 'image' : initialTab);
-
             loadAssets();
-
+            loadAllTags();
         }
-
     }, [isOpen, initialTab, isBrowsingMode]);
 
-
+    const loadAllTags = async () => {
+        const tags = await db.getAllUniqueTags();
+        setAllUniqueTags(tags);
+    };
 
     const loadAssets = async () => {
-
         const all = await db.getAllAssets();
-
         setAssets(all);
+    };
 
+    const onTagsUpdated = (path, newTags) => {
+        setAssets(prev => prev.map(a => a.path === path ? { ...a, tags: newTags } : a));
+        loadAllTags();
     };
 
     useEffect(() => {
         window.refreshAssets = loadAssets;
         return () => { window.refreshAssets = null; };
     }, []);
-
-
 
     const handleImport = async () => {
         console.log("[IMPORT] Import finished, reloading assets...");
@@ -560,7 +843,61 @@ const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, hidde
         }
     };
 
-    const filteredAssets = assets.filter(a => a.type === activeTab);
+    const filteredAssets = useMemo(() => {
+        let list = assets;
+        if (!isBrowsingMode) {
+            list = assets.filter(a => a.type === activeTab);
+        }
+        
+        if (tagFilter === 'all') return list;
+        if (tagFilter === 'untagged') return list.filter(a => !a.tags || a.tags.length === 0);
+        return list.filter(a => a.tags && a.tags.includes(tagFilter));
+    }, [assets, activeTab, isBrowsingMode, tagFilter]);
+
+    const groupedAssets = useMemo(() => {
+        if (!groupByTag) return filteredAssets;
+
+        const result = [];
+        const untagged = [];
+        const tagGroups = {};
+
+        filteredAssets.forEach(asset => {
+            if (!asset.tags || asset.tags.length === 0) {
+                untagged.push(asset);
+            } else {
+                (asset.tags || []).forEach(tag => {
+                    if (tagFilter !== 'all' && tag !== tagFilter) return;
+                    if (!tagGroups[tag]) tagGroups[tag] = [];
+                    tagGroups[tag].push(asset);
+                });
+            }
+        });
+
+        // Add tag "folders"
+        Object.keys(tagGroups).sort().forEach(tag => {
+            result.push({
+                type: 'tag_group',
+                id: `tag:${tag}`,
+                name: tag,
+                tag: tag,
+                items: tagGroups[tag]
+            });
+        });
+
+        if (untagged.length > 0) {
+            result.push({
+                type: 'tag_group',
+                id: 'tag:untagged',
+                name: 'Untagged',
+                tag: 'untagged',
+                items: untagged
+            });
+        }
+
+        return result;
+    }, [filteredAssets, groupByTag, tagFilter]);
+
+    const displayAssets = expandedTag ? (groupedAssets.find(g => g.id === expandedTag)?.items || []) : groupedAssets;
 
     if (!isOpen) return null;
 
@@ -575,10 +912,41 @@ const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, hidde
                 hiddenDrives={hiddenDrives}
                 setHiddenDrives={setHiddenDrives}
                 lowResourceMode={lowResourceMode}
-            />            <div className="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-4xl h-[80vh] flex flex-col shadow-2xl overflow-hidden">
+            />            
+            <div className="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-4xl h-[80vh] flex flex-col shadow-2xl overflow-hidden">
                 <div className="p-4 border-b border-zinc-700 flex justify-between items-center bg-zinc-950">
-                    <h2 className="text-lg font-bold text-white flex items-center gap-2"><Folder size={20} className="text-blue-400"/> Asset Library</h2>
-                    <button onClick={onClose} className="text-gray-400 hover:text-white"><X size={24}/></button>
+                    <div className="flex items-center gap-4">
+                        <h2 className="text-lg font-bold text-white flex items-center gap-2"><Folder size={20} className="text-blue-400"/> Asset Library</h2>
+                        <div className="w-[1px] h-6 bg-zinc-800 mx-2"></div>
+                        <div className="flex items-center gap-2">
+                            <CustomSelect 
+                                value={tagFilter} 
+                                onChange={val => { setTagFilter(val); setExpandedTag(null); }}
+                                buttonClassName="bg-zinc-900 border-zinc-800 px-3 py-1 text-[10px] font-bold uppercase min-w-[120px]"
+                                options={[
+                                    { value: "all", label: "ALL TAGS" },
+                                    { value: "untagged", label: "UNTAGGED" },
+                                    ...allUniqueTags.map(tag => ({ value: tag, label: tag.toUpperCase() }))
+                                ]}
+                            />
+
+                            <button 
+                                onClick={() => { setGroupByTag(!groupByTag); setExpandedTag(null); }}
+                                className={`flex items-center gap-1.5 px-3 py-1 rounded border transition-all ${groupByTag ? 'bg-blue-600 border-blue-500 text-white' : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}
+                            >
+                                <Tags size={12}/>
+                                <span className="text-[10px] font-black uppercase tracking-wider">Group</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        {expandedTag && (
+                            <button onClick={() => setExpandedTag(null)} className="flex items-center gap-1 px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-xs font-bold text-gray-300 transition-colors mr-2">
+                                <SkipBack size={14}/> BACK
+                            </button>
+                        )}
+                        <button onClick={onClose} className="text-gray-400 hover:text-white"><X size={24}/></button>
+                    </div>
                 </div>
                 <div className="flex border-b border-zinc-800 bg-zinc-900">
                     {(isBrowsingMode || activeTab === 'image') && (
@@ -594,30 +962,76 @@ const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, hidde
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 bg-zinc-900/50">
                     <div className="grid grid-cols-4 md:grid-cols-5 gap-4">
-                        <div onClick={() => setShowFileExplorer(true)} className="aspect-square border-2 border-dashed border-zinc-700 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-zinc-800 transition-colors group">
-                            <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center mb-2 group-hover:bg-blue-600 transition-colors">
-                                <HardDrive size={24} className="text-gray-400 group-hover:text-white"/>
-                            </div>
-                            <span className="text-xs font-bold text-gray-500 group-hover:text-gray-300">Browse Server</span>
-                        </div>
-                                                        {filteredAssets.map(asset => (
-                                                            <div key={asset.id} onClick={() => !isBrowsingMode && onSelect(asset)} className={`aspect-square bg-black border border-zinc-700 rounded-lg overflow-hidden relative group ${isBrowsingMode ? '' : 'cursor-pointer hover:ring-2 hover:ring-blue-500'}`}>
-                                                                {asset.type === 'video' ? (
-                                                                    <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-800">
-                                                                        <Video size={48} className="text-zinc-600 mb-2" />
-                                                                        <span className="text-[10px] text-zinc-500 font-bold uppercase">Video Asset</span>
-                                                                    </div>
-                                                                                                        ) : (
-                                                                                                            <img src={asset.url} className="w-full h-full object-cover" loading="lazy" />
-                                                                                                        )}                                                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">                                    <div className="absolute top-2 right-2">
-                                        <button onClick={(e) => handleDelete(e, asset.id, asset.file.name)} className="p-1.5 bg-red-600 rounded-md text-white hover:bg-red-500 shadow-lg" title="Delete Asset"><Trash2 size={14}/></button>
-                                    </div>
-                                    {!isBrowsingMode && onSelect && (
-                                        <span className="bg-blue-600 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg transform translate-y-4 group-hover:translate-y-0 transition-transform">Select</span>
-                                    )}
+                        {!expandedTag && (
+                            <div onClick={() => setShowFileExplorer(true)} className="aspect-square border-2 border-dashed border-zinc-700 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-zinc-800 transition-colors group">
+                                <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center mb-2 group-hover:bg-blue-600 transition-colors">
+                                    <HardDrive size={24} className="text-gray-400 group-hover:text-white"/>
                                 </div>
-                                <div className="absolute bottom-0 left-0 right-0 bg-black/60 backdrop-blur px-2 py-1">
-                                    <p className="text-[10px] text-gray-300 truncate">{asset.file.name}</p>
+                                <span className="text-xs font-bold text-gray-500 group-hover:text-gray-300">Browse Server</span>
+                            </div>
+                        )}
+                        
+                        {displayAssets.map(item => (
+                            <div 
+                                key={item.id} 
+                                onClick={() => {
+                                    if (item.type === 'tag_group') setExpandedTag(item.id);
+                                    else if (!isBrowsingMode) onSelect(item);
+                                }} 
+                                className={`flex flex-col bg-zinc-900/50 border border-zinc-800 rounded-xl overflow-hidden relative group transition-all p-1.5 ${isBrowsingMode ? '' : 'cursor-pointer hover:ring-2 hover:ring-blue-500 hover:bg-zinc-800'}`}
+                            >
+                                <div className="aspect-square w-full rounded-lg overflow-hidden relative shadow-inner bg-black">
+                                    {item.type === 'tag_group' ? (
+                                        <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-950 relative group/folder">
+                                            <Folder size={64} className="text-orange-500/60 group-hover/folder:text-orange-400 transition-colors" />
+                                            <div className="absolute inset-0 flex flex-col items-center justify-center pt-4">
+                                                <Tags size={24} className="text-white mb-1 opacity-80" />
+                                                <span className="text-[10px] font-black text-white uppercase tracking-widest text-center px-2 truncate max-w-full">
+                                                    {item.name}
+                                                </span>
+                                                <span className="text-[8px] font-bold text-orange-500/80 uppercase">
+                                                    {item.items.length} Assets
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ) : item.type === 'video' ? (
+                                        <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-800">
+                                            <Video size={48} className="text-zinc-600 mb-2" />
+                                            <span className="text-[10px] text-zinc-500 font-bold uppercase">Video Asset</span>
+                                        </div>
+                                    ) : (
+                                        <img src={item.url} className="w-full h-full object-cover" loading="lazy" alt="" />
+                                    )}                                                                
+                                    
+                                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">                                    
+                                        {item.type !== 'tag_group' && (
+                                            <>
+                                                <div className="absolute top-2 right-2">
+                                                    <button onClick={(e) => handleDelete(e, item.id, item.file.name)} className="p-1.5 bg-red-600 rounded-md text-white hover:bg-red-500 shadow-lg" title="Delete Asset"><Trash2 size={14}/></button>
+                                                </div>
+
+                                                {!isBrowsingMode && onSelect && (
+                                                    <span className="bg-blue-600 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg transform translate-y-4 group-hover:translate-y-0 transition-transform">Select</span>
+                                                )}
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+                                
+                                <div className="mt-2 px-1 space-y-1">
+                                    <p className="text-[10px] text-gray-300 truncate uppercase font-black tracking-tight" title={item.file?.name}>
+                                        {item.type === 'tag_group' ? `FOLDER: ${item.name}` : item.file?.name}
+                                    </p>
+                                    
+                                    {item.type !== 'tag_group' && (
+                                        <InlineTagEditor 
+                                            path={item.path} 
+                                            tags={item.tags || []} 
+                                            onTagsUpdated={(newTags) => onTagsUpdated(item.path, newTags)}
+                                            allUniqueTags={allUniqueTags}
+                                            canTag={true}
+                                        />
+                                    )}
                                 </div>
                             </div>
                         ))}
@@ -926,7 +1340,7 @@ const ColorPicker = ({ value, onChange, className }) => {
     );
 };
 
-const CustomSelect = ({ value, onChange, options, className = "", buttonClassName = "bg-zinc-950 border-zinc-700 p-2" }) => {
+const CustomSelect = ({ value, onChange, options, className = "", buttonClassName = "bg-zinc-950 border-zinc-700 p-2", dropUp = false }) => {
     const [isOpen, setIsOpen] = useState(false);
     const containerRef = useRef(null);
 
@@ -944,17 +1358,25 @@ const CustomSelect = ({ value, onChange, options, className = "", buttonClassNam
 
     return (
         <div className={`relative ${className}`} ref={containerRef}>
-            <div 
+            <div
                 className={`w-full text-sm rounded text-white font-medium cursor-pointer flex justify-between items-center border hover:border-zinc-500 transition-colors ${buttonClassName}`}
-                onClick={() => setIsOpen(!isOpen)}
+                onClick={(e) => { e.stopPropagation(); setIsOpen(!isOpen); }}
             >
                 <span className="truncate">{selectedOption?.label || value}</span>
                 <ChevronDown size={14} className={`transition-transform ${isOpen ? 'rotate-180' : ''} ml-2 flex-shrink-0`} />
             </div>
             {isOpen && (
-                <div className="absolute z-[100] w-full mt-1 bg-zinc-900 border border-zinc-700 rounded shadow-xl max-h-60 overflow-y-auto left-0 min-w-[100px]">
+                <div className={`absolute z-[1000] w-full bg-zinc-900 border border-zinc-700 rounded shadow-2xl max-h-60 overflow-y-auto left-0 min-w-[120px] ${dropUp ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
                     {options.map((opt) => (
-                        <div key={opt.value} className={`px-3 py-2 text-xs cursor-pointer hover:bg-blue-600 hover:text-white transition-colors ${opt.value === value ? 'bg-zinc-800 text-blue-400' : 'text-gray-300'}`} onClick={(e) => { e.stopPropagation(); onChange(opt.value); setIsOpen(false); }}>
+                        <div 
+                            key={opt.value} 
+                            className={`px-3 py-2 text-[10px] font-bold uppercase cursor-pointer hover:bg-blue-600 hover:text-white transition-colors ${opt.value === value ? 'bg-zinc-800 text-blue-400 border-l-2 border-blue-500' : 'text-gray-300'}`} 
+                            onClick={(e) => { 
+                                e.stopPropagation(); 
+                                onChange(opt.value); 
+                                setIsOpen(false); 
+                            }}
+                        >
                             {opt.label}
                         </div>
                     ))}
@@ -963,8 +1385,60 @@ const CustomSelect = ({ value, onChange, options, className = "", buttonClassNam
         </div>
     );
 };
-
 // --- RENDER ENGINE ---
+
+const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive }) => {
+    const canvasRef = useRef(null);
+    const [img, setImg] = useState(null);
+
+    useEffect(() => {
+        const i = new Image();
+        i.src = src;
+        i.onload = () => setImg(i);
+    }, [src]);
+
+    useEffect(() => {
+        if (!img || !canvasRef.current) return;
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width;
+        const h = canvas.height;
+
+        ctx.clearRect(0, 0, w, h);
+        
+        // Create pattern
+        const pattern = ctx.createPattern(img, 'repeat');
+        
+        ctx.save();
+        
+        // Center of the wall for rotation/scale
+        const cx = w * (alignX / 100);
+        const cy = h * (alignY / 100);
+        
+        ctx.translate(cx, cy);
+        ctx.rotate((rotate * Math.PI) / 180);
+        ctx.scale(scale, scale);
+        // Move back so the pattern is "centered" on the align points
+        ctx.translate(-img.width / 2, -img.height / 2);
+        
+        ctx.fillStyle = pattern;
+        
+        // To ensure we cover everything after rotation/scale, we draw a huge rectangle
+        // or just transform the pattern matrix. Canvas pattern.setTransform is better.
+        const matrix = new DOMMatrix();
+        matrix.translateSelf(cx, cy);
+        matrix.rotateSelf(rotate);
+        matrix.scaleSelf(scale, scale);
+        matrix.translateSelf(-img.width / 2, -img.height / 2);
+        pattern.setTransform(matrix);
+        
+        ctx.restore();
+        ctx.fillStyle = pattern;
+        ctx.fillRect(0, 0, w, h);
+    }, [img, scale, rotate, alignX, alignY]);
+
+    return <canvas ref={canvasRef} width={1024} height={1024} style={{ width: '100%', height: '100%', backgroundColor: isLive ? 'black' : 'transparent' }} />;
+};
 
 const RenderNode = ({ nodeId, nodes, connections, resolution, wallColor, isLive, isTransitioning }) => {
     const node = nodes.find(n => n.id === nodeId);
@@ -997,6 +1471,21 @@ const RenderNode = ({ nodeId, nodes, connections, resolution, wallColor, isLive,
 
     if (node.type === 'image' || node.type === 'video') {
         const style = getStyle();
+        const isTiling = node.data.tiling ?? false;
+
+        if (isTiling && node.type === 'image' && node.data.value) {
+            return (
+                <TiledImage 
+                    src={node.data.value} 
+                    scale={node.data.scale || 1} 
+                    rotate={node.data.rotate || 0}
+                    alignX={node.data.alignX ?? 50}
+                    alignY={node.data.alignY ?? 50}
+                    isLive={isLive}
+                />
+            );
+        }
+
         return (
             <div style={{width: '100%', height: '100%', position: 'relative', backgroundColor: isLive ? 'black' : 'transparent'}}>
                 {node.type === 'image' && node.data.value && <img src={node.data.value} style={style} />}
@@ -1004,7 +1493,7 @@ const RenderNode = ({ nodeId, nodes, connections, resolution, wallColor, isLive,
                     <video 
                         key={node.data.value} 
                         src={node.data.value} 
-                        style={style} 
+                        style={{...style, objectFit: isTiling ? 'none' : (node.data.fit || 'cover')}} 
                         autoPlay 
                         loop 
                         muted={!(node.data.enableAudio ?? false)} 
@@ -1084,7 +1573,7 @@ const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, wal
 
     return (
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
-            {walls.map(wall => {
+            {walls.filter(w => !w.hidden).map(wall => {
                 const prevRootId = getRootNodeId(prevCueState, wall.id);
                 const currRootId = getRootNodeId(currentCueState, wall.id);
                 
@@ -1143,12 +1632,7 @@ const WallBackgroundLayer = ({ walls, currentCueState, isLive, isTransitioning, 
 
     return (
         <svg className="absolute inset-0 w-full h-full pointer-events-none z-0" style={{backgroundColor: 'transparent'}}>
-            <defs>
-                <pattern id="zebra-pattern" width="20" height="20" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-                    <rect width="10" height="20" fill="currentColor"/>
-                </pattern>
-            </defs>
-            {walls.map(wall => {
+            {walls.filter(w => !w.hidden).map(wall => {
                 const hasContent = currentCueState?.nodes?.some(n => 
                     n.type === 'output' && 
                     n.data.wallId === wall.id && 
@@ -1159,7 +1643,7 @@ const WallBackgroundLayer = ({ walls, currentCueState, isLive, isTransitioning, 
 
                 return (
                     <g key={wall.id}>
-                        <path d={`M ${wall.points[0].x} ${wall.points[0].y} L ${wall.points[1].x} ${wall.points[1].y} L ${wall.points[2].x} ${wall.points[2].y} L ${wall.points[3].x} ${wall.points[3].y} Z`} fill="url(#zebra-pattern)" className="zebra-pattern-path" color={wall.color} stroke="none" />
+                        <path d={`M ${wall.points[0].x} ${wall.points[0].y} L ${wall.points[1].x} ${wall.points[1].y} L ${wall.points[2].x} ${wall.points[2].y} L ${wall.points[3].x} ${wall.points[3].y} Z`} fill="rgba(255,255,255,0.05)" stroke="none" />
                     </g>
                 );
             })}
@@ -1268,6 +1752,17 @@ const Node = ({ id, type, x, y, label, selected, onDragStart, onHandleClick, dat
 
                 {(type === 'image' || type === 'video') && (
                     <div className="space-y-2 border-t border-zinc-700 pt-2">
+                        <div className="flex items-center justify-between mb-2">
+                            <label className="text-[10px] text-gray-400 font-black uppercase tracking-widest flex items-center gap-1">
+                                <Grid3X3 size={10} className="text-blue-400" /> Tiling Enable
+                            </label>
+                            <input 
+                                type="checkbox" 
+                                checked={data?.tiling ?? false} 
+                                onChange={(e) => updateData(id, { tiling: e.target.checked })} 
+                                className="form-checkbox h-3.5 w-3.5 text-blue-600 bg-zinc-900 border-zinc-700 rounded" 
+                            />
+                        </div>
                         <div className="grid grid-cols-2 gap-2">
                             <div>
                                 <label className="text-[10px] text-gray-500 font-bold block mb-1">Mode</label>
@@ -1722,12 +2217,20 @@ const WallStackVisualizer = ({ walls, activeWallId, folders }) => {
     );
 };
 
-const WallItem = ({ wall, activeWallId, setActiveWallId, setActiveFolderId, moveWall, deleteWall }) => {
+const WallItem = ({ wall, activeWallId, setActiveWallId, setActiveFolderId, moveWall, deleteWall, setWalls }) => {
+    const isHidden = wall.hidden ?? false;
     return (
-        <div
+        <div 
             onClick={() => { setActiveWallId(wall.id); if (setActiveFolderId) setActiveFolderId(null); }}            className={`flex justify-between items-center p-2 rounded text-xs cursor-pointer ${wall.id === activeWallId ? 'bg-zinc-700 text-white border border-zinc-600' : 'text-gray-400 hover:bg-zinc-800/50'}`}
         >
             <div className="flex items-center gap-2 truncate">
+                <button 
+                    onClick={(e) => { e.stopPropagation(); setWalls(prev => prev.map(w => w.id === wall.id ? { ...w, hidden: !isHidden } : w)); }}
+                    className={`p-1 rounded hover:bg-zinc-600 flex-shrink-0 ${isHidden ? 'text-red-500' : 'text-zinc-500 hover:text-white'}`}
+                    title={isHidden ? "Show Wall" : "Hide Wall"}
+                >
+                    {isHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
                 <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: wall.color }}></div>
                 <span className="truncate">{wall.name}</span>
             </div>
@@ -1741,7 +2244,6 @@ const WallItem = ({ wall, activeWallId, setActiveWallId, setActiveFolderId, move
         </div>
     );
 };
-
 const FolderItem = ({ folder, walls, activeWallId, setActiveWallId, activeFolderId, setActiveFolderId, setWalls, setFolders, moveWall, moveFolder, deleteWall, showConfirm }) => {
     const folderWalls = walls.filter(w => w.folderId === folder.id);
     return (
@@ -1777,7 +2279,7 @@ const FolderItem = ({ folder, walls, activeWallId, setActiveWallId, activeFolder
             {folder.isOpen && (
                 <div className="ml-2 pl-2 border-l border-zinc-700 mt-1 space-y-1">
                     {folderWalls.map(wall => (
-                        <WallItem key={wall.id} wall={wall} activeWallId={activeWallId} setActiveWallId={setActiveWallId} setActiveFolderId={setActiveFolderId} moveWall={moveWall} deleteWall={deleteWall} />
+                        <WallItem key={wall.id} wall={wall} activeWallId={activeWallId} setActiveWallId={setActiveWallId} setActiveFolderId={setActiveFolderId} moveWall={moveWall} deleteWall={deleteWall} setWalls={setWalls} />
                     ))}
                 </div>
             )}
@@ -1930,16 +2432,46 @@ export default function App() {
     const [folders, setFolders] = useState([]);
     const [activeWallId, setActiveWallId] = useState(1);
     const [activeFolderId, setActiveFolderId] = useState(null);
+    const [isGroupSelection, setIsGroupSelection] = useState(false);
+    const lastClickRef = useRef({ id: null, time: 0 });
     const [menuOpen, setMenuOpen] = useState(true); // Open menu by default
     const [viewMode, setViewMode] = useState('2d'); 
     const [showGuides, setShowGuides] = useState(false); 
     const [moveMode, setMoveMode] = useState(false);
+    const [scaleMode, setScaleMode] = useState(false);
+    const [alignMode, setAlignMode] = useState(false);
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [lowResourceMode, setLowResourceMode] = useState(() => {
         const saved = localStorage.getItem('emap_low_resource_mode');
         return saved === 'true';
     });
     const [showSettings, setShowSettings] = useState(false);
+
+    // Mode Hotkeys
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            // Ignore if typing in an input or textarea
+            if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+            if (document.activeElement.isContentEditable) return;
+
+            const key = e.key.toLowerCase();
+            if (key === 'm') { setMoveMode(p => !p); if(!moveMode) { setScaleMode(false); setAlignMode(false); } }
+            if (key === 's') { setScaleMode(p => !p); if(!scaleMode) { setMoveMode(false); setAlignMode(false); } }
+            if (key === 'a') { setAlignMode(p => !p); if(!alignMode) { setMoveMode(false); setScaleMode(false); } }
+            if (key === 'g') { setShowGuides(p => !p); }
+            if (key === 'h') { setMenuOpen(p => !p); }
+            if (e.key === 'Escape') {
+                setMoveMode(false);
+                setScaleMode(false);
+                setAlignMode(false);
+                setActiveWallId(null);
+                setActiveFolderId(null);
+                setIsGroupSelection(false);
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [moveMode, scaleMode, alignMode, menuOpen, showGuides]);
 
     // Auto-bypass fullscreen gate if in Qt WebEngine (which is always fullscreen for us)
     useEffect(() => {
@@ -2345,7 +2877,79 @@ export default function App() {
         })); 
     };
 
-    const updatePoint = (wallId, idx, cx, cy) => { setWalls(p => p.map(w => { if(w.id !== wallId) return w; const pts = [...w.points]; if(moveMode) { const dx = cx - pts[idx].x; const dy = cy - pts[idx].y; return {...w, points: pts.map(pt => ({x: pt.x + dx, y: pt.y + dy}))}; } pts[idx] = {x:cx, y:cy}; return {...w, points: pts}; })); };
+    const updatePoint = (wallId, idx, cx, cy) => { setWalls(p => p.map(w => { 
+        if(w.id !== wallId) return w; 
+        const pts = [...w.points]; 
+        
+        // Check if this is an edge handle (indices 4, 5, 6, 7)
+        if (idx >= 4) {
+            const edgeIdx = idx - 4; // 0: Top, 1: Right, 2: Bottom, 3: Left
+            // Define which corners belong to which edge
+            const edgeMap = [[0, 1], [1, 2], [2, 3], [3, 0]];
+            const [p1Idx, p2Idx] = edgeMap[edgeIdx];
+            
+            // Calculate current edge midpoint
+            const midX = (pts[p1Idx].x + pts[p2Idx].x) / 2;
+            const midY = (pts[p1Idx].y + pts[p2Idx].y) / 2;
+            
+            // Delta from midpoint to cursor
+            const dx = cx - midX;
+            const dy = cy - midY;
+            
+            // Move both corner points by the delta
+            pts[p1Idx] = { x: pts[p1Idx].x + dx, y: pts[p1Idx].y + dy };
+            pts[p2Idx] = { x: pts[p2Idx].x + dx, y: pts[p2Idx].y + dy };
+            
+            return { ...w, points: pts };
+        }
+
+        if(moveMode) { 
+            const dx = cx - pts[idx].x; 
+            const dy = cy - pts[idx].y; 
+            return {...w, points: pts.map(pt => ({x: pt.x + dx, y: pt.y + dy}))}; 
+        } 
+
+        if(scaleMode) {
+            // Calculate center of the wall
+            const centerX = pts.reduce((sum, p) => sum + p.x, 0) / 4;
+            const centerY = pts.reduce((sum, p) => sum + p.y, 0) / 4;
+            
+            // Current distance from center to dragged point
+            const oldDx = pts[idx].x - centerX;
+            const oldDy = pts[idx].y - centerY;
+            const oldDist = Math.sqrt(oldDx*oldDx + oldDy*oldDy);
+            
+            // New distance from center to cursor
+            const newDx = cx - centerX;
+            const newDy = cy - centerY;
+            const newDist = Math.sqrt(newDx*newDx + newDy*newDy);
+            
+            if (oldDist < 1) return w; // Avoid division by zero
+            
+            const scale = newDist / oldDist;
+            
+            return {
+                ...w,
+                points: pts.map(pt => ({
+                    x: centerX + (pt.x - centerX) * scale,
+                    y: centerY + (pt.y - centerY) * scale
+                }))
+            };
+        }
+
+        pts[idx] = {x:cx, y:cy}; 
+        return {...w, points: pts}; 
+    })); };
+    const transformGroup = (folderId, dx, dy) => {
+        setWalls(prev => prev.map(w => {
+            if (w.folderId !== folderId) return w;
+            return {
+                ...w,
+                points: w.points.map(pt => ({ x: pt.x + dx, y: pt.y + dy }))
+            };
+        }));
+    };
+
     const addFolder = () => setFolders(p => [...p, {id: Date.now(), name: "Group", isOpen: true, color: "#6b7280"}]);
     const deleteWall = (id, name) => {
         showConfirm("Delete Wall", `Are you sure you want to delete the wall "${name}"?`, () => {
@@ -2477,13 +3081,49 @@ export default function App() {
     const activeFolder = folders.find(f => f.id === activeFolderId);
 
     const renderSVG = (isLive) => (
-        <svg className="w-full h-full" style={{backgroundColor: (isLive || menuTab === 'scenes') ? 'black' : 'transparent'}}>
+        <svg className="w-full h-full" style={{backgroundColor: (isLive || menuTab === 'scenes' || !menuOpen) ? 'black' : 'transparent'}}>
             <defs>
                  <pattern id="smallGrid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5"/></pattern>
                  <pattern id="grid" width="100" height="100" patternUnits="userSpaceOnUse"><rect width="100" height="100" fill="url(#smallGrid)"/><path d="M 100 0 L 0 0 0 100" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="1"/></pattern>
             </defs>
             {showGuides && !isLive && menuTab !== 'scenes' && (<><rect width="100%" height="100%" fill="url(#grid)" pointerEvents="none" /><line x1="50%" y1="0" x2="50%" y2="100%" stroke="cyan" strokeOpacity="0.5" strokeDasharray="5,5" pointerEvents="none" /><line x1="0" y1="50%" x2="100%" y2="50%" stroke="cyan" strokeOpacity="0.5" strokeDasharray="5,5" pointerEvents="none" /></>)}
-            {walls.map(wall => {
+            
+            {/* Group Bounding Boxes */}
+            {!isLive && menuTab !== 'scenes' && folders.map(folder => {
+                const folderWalls = walls.filter(w => w.folderId === folder.id && !w.hidden);
+                if (folderWalls.length === 0) return null;
+                
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                folderWalls.forEach(w => w.points.forEach(p => {
+                    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+                    maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+                }));
+                
+                const isSelected = activeFolderId === folder.id && isGroupSelection;
+                const stroke = isSelected ? "white" : "rgba(255,255,255,0.15)";
+                const padding = 15;
+                
+                return (
+                    <g key={`group-bb-${folder.id}`}>
+                        <rect 
+                            x={minX - padding} y={minY - padding} 
+                            width={maxX - minX + padding*2} height={maxY - minY + padding*2} 
+                            fill="transparent" stroke={stroke} strokeWidth={isSelected ? 2 : 1} strokeDasharray={isSelected ? "none" : "4,4"} 
+                            pointerEvents="none"
+                        />
+                        {isSelected && (
+                            <>
+                                <GroupTransformHandle x={minX - padding} y={minY - padding} onDrag={(dx, dy) => transformGroup(folder.id, dx, dy)} />
+                                <GroupTransformHandle x={maxX + padding} y={minY - padding} onDrag={(dx, dy) => transformGroup(folder.id, dx, dy)} />
+                                <GroupTransformHandle x={maxX + padding} y={maxY + padding} onDrag={(dx, dy) => transformGroup(folder.id, dx, dy)} />
+                                <GroupTransformHandle x={minX - padding} y={maxY + padding} onDrag={(dx, dy) => transformGroup(folder.id, dx, dy)} />
+                            </>
+                        )}
+                    </g>
+                );
+            })}
+
+            {walls.filter(w => !w.hidden).map(wall => {
                 const getWallStyle = (cueState) => {
                     return { fill: wall.color, stroke: isLive ? 'none' : wall.color };
                 };
@@ -2493,18 +3133,104 @@ export default function App() {
                 const isProjecting = (isLive || menuTab === 'scenes') && currentCueState?.nodes?.some(n => n.type === 'output' && n.data.wallId === wall.id && currentCueState.connections?.some(c => c.to === n.id));
                 
                 return (
-                    <g key={wall.id} onClick={(e) => { if(!isLive) { e.stopPropagation(); setActiveWallId(wall.id); setActiveFolderId(null); }}}>
+                    <g key={wall.id} onClick={(e) => { 
+                        if(!isLive) { 
+                            e.stopPropagation(); 
+                            if (alignMode && activeWallId && activeWallId !== wall.id) {
+                                // Align activeWall to this wall's orientation
+                                const activeWall = walls.find(w => w.id === activeWallId);
+                                if (activeWall) {
+                                    // 1. Infer intrinsic aspect ratios using heuristic
+                                    const getAR = (pts) => {
+                                        const w = (getDistance(pts[0], pts[1]) + getDistance(pts[3], pts[2])) / 2;
+                                        const h = (getDistance(pts[0], pts[3]) + getDistance(pts[1], pts[2])) / 2;
+                                        return w / h || 1;
+                                    };
+                                    
+                                    const arA = getAR(activeWall.points);
+                                    const arB = getAR(wall.points);
+                                    
+                                    // 2. Solve homography for target wall B (from its own intrinsic rectangle to its screen points)
+                                    const srcB = [{x:0, y:0}, {x:arB, y:0}, {x:arB, y:1}, {x:0, y:1}];
+                                    const H_target = solveHomography(srcB, wall.points);
+                                    
+                                    // 3. Define active wall A's intrinsic rectangle
+                                    const srcA = [{x:0, y:0}, {x:arA, y:0}, {x:arA, y:1}, {x:0, y:1}];
+                                    
+                                    // 4. Map A's intrinsic points through B's perspective
+                                    const mappedPoints = srcA.map(p => applyHomography(H_target, p.x, p.y));
+                                    
+                                    // 5. Center and scale to match active wall A's current footprint
+                                    const acX = activeWall.points.reduce((s, p) => s + p.x, 0) / 4;
+                                    const acY = activeWall.points.reduce((s, p) => s + p.y, 0) / 4;
+                                    const activeSize = activeWall.points.reduce((s, p) => s + Math.sqrt((p.x - acX)**2 + (p.y - acY)**2), 0) / 4;
+                                    
+                                    const mcX = mappedPoints.reduce((s, p) => s + p.x, 0) / 4;
+                                    const mcY = mappedPoints.reduce((s, p) => s + p.y, 0) / 4;
+                                    const mappedSize = mappedPoints.reduce((s, p) => s + Math.sqrt((p.x - mcX)**2 + (p.y - mcY)**2), 0) / 4;
+                                    
+                                    const scaleFactor = activeSize / mappedSize;
+                                    
+                                    const newPoints = mappedPoints.map(p => ({
+                                        x: acX + (p.x - mcX) * scaleFactor,
+                                        y: acY + (p.y - mcY) * scaleFactor
+                                    }));
+                                    
+                                    setWalls(prev => prev.map(w => w.id === activeWallId ? { ...w, points: newPoints } : w));
+                                    setAlignMode(false);
+                                }
+                            } else {
+                                const isGroupSelect = wall.folderId !== null && (!isGroupSelection || activeFolderId !== wall.folderId);
+                                
+                                if (isGroupSelect) {
+                                    setIsGroupSelection(true);
+                                    setActiveFolderId(wall.folderId);
+                                    setActiveWallId(null);
+                                } else {
+                                    setIsGroupSelection(false);
+                                    setActiveWallId(wall.id);
+                                    setActiveFolderId(null);
+                                }
+                            }
+                        }
+                    }}>
                         {isProjecting && ( <path d={`M ${wall.points[0].x} ${wall.points[0].y} L ${wall.points[1].x} ${wall.points[1].y} L ${wall.points[2].x} ${wall.points[2].y} L ${wall.points[3].x} ${wall.points[3].y} Z`} fill="transparent" stroke="none" /> )}
                         {!isProjecting && (isLive || menuTab === 'scenes') && ( <path d={`M ${wall.points[0].x} ${wall.points[0].y} L ${wall.points[1].x} ${wall.points[1].y} L ${wall.points[2].x} ${wall.points[2].y} L ${wall.points[3].x} ${wall.points[3].y} Z`} fill={currStyle.fill} fillOpacity={baseOpacity} stroke="none" /> )}
                         {(!isLive && menuTab !== 'scenes') && ( <path d={`M ${wall.points[0].x} ${wall.points[0].y} L ${wall.points[1].x} ${wall.points[1].y} L ${wall.points[2].x} ${wall.points[2].y} L ${wall.points[3].x} ${wall.points[3].y} Z`} fill={currStyle.fill} fillOpacity={baseOpacity} stroke={currStyle.stroke} strokeWidth={wall.id === activeWallId ? 2 : 1} strokeDasharray="5,5" /> )}
-                        {(isLive && currentCueObj?.type === 'test') && <WarpedTextureGrid wallPoints={wall.points} />}
-                        {(!isLive && (wall.id === activeWallId) && menuTab !== 'scenes') && wall.points.map((p, i) => ( <PointHandle key={`handle-${wall.id}-${i}`} index={i} x={p.x} y={p.y} color={wall.color} isSelected={true} onDrag={(idx, x, y) => updatePoint(wall.id, idx, x, y)} isMoveMode={moveMode} /> ))}
+                        {(!isLive && (wall.id === activeWallId) && menuTab !== 'scenes') && wall.points.map((p, i) => ( <PointHandle key={`handle-${wall.id}-${i}`} index={i} x={p.x} y={p.y} color={wall.color} isSelected={true} onDrag={(idx, x, y) => updatePoint(wall.id, idx, x, y)} isMoveMode={moveMode} isScaleMode={scaleMode} type="corner" /> ))}
+                        
+                        {(!isLive && (wall.id === activeWallId) && menuTab !== 'scenes' && !scaleMode && !moveMode) && [
+                            { idx: 4, p1: 0, p2: 1 }, // Top
+                            { idx: 5, p1: 1, p2: 2 }, // Right
+                            { idx: 6, p1: 2, p2: 3 }, // Bottom
+                            { idx: 7, p1: 3, p2: 0 }  // Left
+                        ].map(edge => {
+                            const p1 = wall.points[edge.p1];
+                            const p2 = wall.points[edge.p2];
+                            const midX = (p1.x + p2.x) / 2;
+                            const midY = (p1.y + p2.y) / 2;
+                            return (
+                                <PointHandle 
+                                    key={`edge-${wall.id}-${edge.idx}`}
+                                    index={edge.idx}
+                                    x={midX}
+                                    y={midY}
+                                    color={wall.color}
+                                    isSelected={true}
+                                    onDrag={(idx, x, y) => updatePoint(wall.id, idx, x, y)}
+                                    isMoveMode={moveMode}
+                                    isScaleMode={scaleMode}
+                                    type="edge"
+                                />
+                            );
+                        })}
+
                         {showGuides && !isLive && menuTab !== 'scenes' && wall.points.map((p, i) => ( <text key={`guide-lbl-${i}`} x={p.x + 12} y={p.y + 4} fill="lime" fontSize="9" fontFamily="monospace" className="pointer-events-none select-none shadow-black drop-shadow-md" style={{textShadow: '1px 1px 0 #000'}}> {Math.round(p.x)},{Math.round(p.y)} </text> ))}
                         {showGuides && !isLive && menuTab !== 'scenes' && ( <g pointerEvents="none"> <line x1={wall.points[0].x} y1={wall.points[0].y} x2={wall.points[2].x} y2={wall.points[2].y} stroke="cyan" strokeWidth="1" strokeOpacity="0.5" strokeDasharray="4,4" /> <line x1={wall.points[1].x} y1={wall.points[1].y} x2={wall.points[3].x} y2={wall.points[3].y} stroke="cyan" strokeWidth="1" strokeOpacity="0.5" strokeDasharray="4,4" /> </g> )}
                     </g>
                 );
             })}
-            {(!isLive && activeWall && menuTab !== 'scenes') && activeWall.points.map((p, i) => ( <PointHandle key={`handle-${activeWall.id}-${i}`} index={i} x={p.x} y={p.y} color={activeWall.color} isSelected={true} onDrag={(idx, x, y) => updatePoint(activeWall.id, idx, x, y)} isMoveMode={moveMode} /> ))}
+            {(!isLive && activeWall && menuTab !== 'scenes') && activeWall.points.map((p, i) => ( <PointHandle key={`handle-${activeWall.id}-${i}`} index={i} x={p.x} y={p.y} color={activeWall.color} isSelected={true} onDrag={(idx, x, y) => updatePoint(activeWall.id, idx, x, y)} isMoveMode={moveMode} isScaleMode={scaleMode} /> ))}
         </svg>
     );
 
@@ -2569,12 +3295,32 @@ export default function App() {
                                 <div className="flex items-center gap-3">
                                     <div>
                                         <h1 className="text-xl font-bold tracking-wider text-white uppercase">MAPPING STUDIO</h1>
-                                        <div className="flex gap-2 mt-1">
-                                            <span className={`text-xs px-1.5 py-0.5 rounded font-mono border transition-colors ${moveMode ? 'bg-orange-600 border-orange-400 text-white' : 'bg-zinc-800 border-zinc-600 text-gray-200'}`}>M: Move All</span>
-                                            <span className={`text-xs px-1.5 py-0.5 rounded font-mono border transition-colors ${showGuides ? 'bg-blue-900 border-blue-500 text-blue-200' : 'bg-zinc-800 border-zinc-600 text-gray-200'}`}>G: Guides</span>
-                                            <span className="text-xs bg-zinc-800 px-1.5 py-0.5 rounded text-gray-200 font-mono border border-zinc-600 uppercase">H: Menu</span>
-                                        </div>
-                                    </div>
+                                        <div className="flex flex-wrap gap-2 mt-2">
+                                            <div className={`flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-900 border transition-all ${moveMode ? 'border-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.2)]' : 'border-zinc-800'}`}>
+                                                <span className={`text-[10px] font-black font-mono ${moveMode ? 'text-orange-400' : 'text-zinc-500'}`}>M</span>
+                                                <span className="text-[9px] font-bold text-gray-400 uppercase tracking-tighter">Move</span>
+                                            </div>
+                                            <div className={`flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-900 border transition-all ${scaleMode ? 'border-cyan-500 shadow-[0_0_10px_rgba(6,182,212,0.2)]' : 'border-zinc-800'}`}>
+                                                <span className={`text-[10px] font-black font-mono ${scaleMode ? 'text-cyan-400' : 'text-zinc-500'}`}>S</span>
+                                                <span className="text-[9px] font-bold text-gray-400 uppercase tracking-tighter">Scale</span>
+                                            </div>
+                                            <div className={`flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-900 border transition-all ${alignMode ? 'border-purple-500 shadow-[0_0_10px_rgba(168,85,247,0.2)]' : 'border-zinc-800'}`}>
+                                                <span className={`text-[10px] font-black font-mono ${alignMode ? 'text-purple-400' : 'text-zinc-500'}`}>A</span>
+                                                <span className="text-[9px] font-bold text-gray-400 uppercase tracking-tighter">Align</span>
+                                            </div>
+                                            <div className={`flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-900 border transition-all ${showGuides ? 'border-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.2)]' : 'border-zinc-800'}`}>
+                                                <span className={`text-[10px] font-black font-mono ${showGuides ? 'text-blue-400' : 'text-zinc-500'}`}>G</span>
+                                                <span className="text-[9px] font-bold text-gray-400 uppercase tracking-tighter">Guides</span>
+                                            </div>
+                                            <div className={`flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-900 border transition-all ${menuOpen ? 'border-zinc-500' : 'border-zinc-800'}`}>
+                                                <span className={`text-[10px] font-black font-mono ${menuOpen ? 'text-white' : 'text-zinc-500'}`}>H</span>
+                                                <span className="text-[9px] font-bold text-gray-400 uppercase tracking-tighter">Menu</span>
+                                            </div>
+                                            <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-950 border border-zinc-800">
+                                                <span className="text-[10px] font-black font-mono text-zinc-600">ESC</span>
+                                                <span className="text-[9px] font-bold text-gray-500 uppercase tracking-tighter">Clear</span>
+                                            </div>
+                                        </div>                                    </div>
                                     
                                     {usbDrives.filter(d => !hiddenDrives.includes(d.path)).length > 0 && (
                                         <button 
@@ -2661,8 +3407,18 @@ export default function App() {
                     <div className="flex-1 overflow-y-auto p-4 space-y-6 relative z-10">
                         {menuTab === 'config' && (
                             <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
-                                {viewMode === '2d' && (<div className="grid grid-cols-2 gap-2"><button onClick={() => setMoveMode(p => !p)} className={`p-2 rounded-lg text-[10px] uppercase font-bold tracking-wider flex items-center justify-center gap-1 border transition-all ${moveMode ? 'bg-orange-600 border-orange-400 text-white shadow-lg shadow-orange-900/40' : 'bg-zinc-800/50 border-zinc-700 text-zinc-400'}`}> <Move size={14} /> Move </button><button onClick={() => setShowGuides(p => !p)} className={`p-2 rounded-lg text-[10px] uppercase font-bold tracking-wider flex items-center justify-center gap-1 border transition-all ${showGuides ? 'bg-blue-900/50 border-blue-500 text-blue-200 shadow-lg shadow-blue-900/40' : 'bg-zinc-800/50 border-zinc-700 text-zinc-400'}`}> <Grid3X3 size={14} /> Guide </button></div>)}
-                                {activeWall && (
+                                {viewMode === '2d' && (
+                                    <div className="flex flex-col gap-2">
+                                       <div className="grid grid-cols-2 gap-2">
+                                           <button onClick={() => { setMoveMode(p => !p); if(!moveMode) { setScaleMode(false); setAlignMode(false); } }} className={`p-2 rounded-lg text-[10px] uppercase font-bold tracking-wider flex items-center justify-center gap-1 border transition-all ${moveMode ? 'bg-orange-600 border-orange-400 text-white shadow-lg shadow-orange-900/40' : 'bg-zinc-800/50 border-zinc-700 text-zinc-400'}`}> <Move size={14} /> Move </button>
+                                           <button onClick={() => { setScaleMode(p => !p); if(!scaleMode) { setMoveMode(false); setAlignMode(false); } }} className={`p-2 rounded-lg text-[10px] uppercase font-bold tracking-wider flex items-center justify-center gap-1 border transition-all ${scaleMode ? 'bg-cyan-600 border-cyan-400 text-white shadow-lg shadow-cyan-900/40' : 'bg-zinc-800/50 border-zinc-700 text-zinc-400'}`}> <Maximize size={14} /> Scale </button>
+                                       </div>
+                                       <div className="grid grid-cols-2 gap-2">
+                                           <button onClick={() => { setAlignMode(p => !p); if(!alignMode) { setMoveMode(false); setScaleMode(false); } }} className={`p-2 rounded-lg text-[10px] uppercase font-bold tracking-wider flex items-center justify-center gap-1 border transition-all ${alignMode ? 'bg-purple-600 border-purple-400 text-white shadow-lg shadow-purple-900/40' : 'bg-zinc-800/50 border-zinc-700 text-zinc-400'}`}> <Target size={14} /> Align </button>
+                                           <button onClick={() => setShowGuides(p => !p)} className={`p-2 rounded-lg text-[10px] uppercase font-bold tracking-wider flex items-center justify-center gap-1 border transition-all ${showGuides ? 'bg-blue-900/50 border-blue-500 text-blue-200 shadow-lg shadow-blue-900/40' : 'bg-zinc-800/50 border-zinc-700 text-zinc-400'}`}> <Grid3X3 size={14} /> Guide </button>
+                                       </div>
+                                    </div>
+                                )}                                {activeWall && (
                                     <div className="space-y-3 bg-zinc-950/50 border border-zinc-800 p-3 rounded-xl shadow-inner">
                                         <div className="flex items-center gap-2 mb-2 pb-2 border-b border-zinc-800/50">
                                             <div className="w-3 h-3 rounded-full shadow-lg" style={{ backgroundColor: activeWall.color }}></div>
@@ -2756,7 +3512,7 @@ export default function App() {
                                                 item.type === 'folder' ? (
                                                     <FolderItem key={item.folder.id} folder={item.folder} walls={walls} activeWallId={activeWallId} setActiveWallId={setActiveWallId} activeFolderId={activeFolderId} setActiveFolderId={setActiveFolderId} setWalls={setWalls} setFolders={setFolders} moveWall={moveWall} moveFolder={moveFolder} deleteWall={deleteWall} showConfirm={showConfirm} />
                                                 ) : (
-                                                    <WallItem key={item.wall.id} wall={item.wall} activeWallId={activeWallId} setActiveWallId={setActiveWallId} setActiveFolderId={setActiveFolderId} moveWall={moveWall} deleteWall={deleteWall} />
+                                                    <WallItem key={item.wall.id} wall={item.wall} activeWallId={activeWallId} setActiveWallId={setActiveWallId} setActiveFolderId={setActiveFolderId} moveWall={moveWall} deleteWall={deleteWall} setWalls={setWalls} />
                                                 )
                                             ));
                                         })()}

@@ -274,11 +274,6 @@ const WallBackgroundLayer = ({ walls, currentCueState, isLive, isTransitioning, 
 
     return (
         <svg className="absolute inset-0 w-full h-full pointer-events-none z-0" style={{backgroundColor: 'transparent'}}>
-            <defs>
-                <pattern id="zebra-pattern" width="20" height="20" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-                    <rect width="10" height="20" fill="currentColor"/>
-                </pattern>
-            </defs>
             {walls.map(wall => {
                 const hasContent = currentCueState?.nodes?.some(n => 
                     n.type === 'output' && 
@@ -290,7 +285,7 @@ const WallBackgroundLayer = ({ walls, currentCueState, isLive, isTransitioning, 
 
                 return (
                     <g key={wall.id}>
-                        <path d={`M ${wall.points[0].x} ${wall.points[0].y} L ${wall.points[1].x} ${wall.points[1].y} L ${wall.points[2].x} ${wall.points[2].y} L ${wall.points[3].x} ${wall.points[3].y} Z`} fill="url(#zebra-pattern)" className="zebra-pattern-path" color={wall.color} stroke="none" />
+                        <path d={`M ${wall.points[0].x} ${wall.points[0].y} L ${wall.points[1].x} ${wall.points[1].y} L ${wall.points[2].x} ${wall.points[2].y} L ${wall.points[3].x} ${wall.points[3].y} Z`} fill="rgba(255,255,255,0.05)" stroke="none" />
                     </g>
                 );
             })}
@@ -373,19 +368,13 @@ export const ProjectionContent = ({ walls, currentCueState, prevCueState, transi
                                     )}
                                 </>
                             )}
-                            
-                            {/* Special case: Test Grid (Texture mapping test) */}
-                            {isLive && currentCueState?.type === 'test' && (
-                                <WarpedTextureGrid wallPoints={wall.points} />
-                            )}
-                        </g>
-                    );
-                })}
-            </svg>
-        </div>
-    );
-};
-
+                            </g>
+                            );
+                            })}
+                            </svg>
+                            </div>
+                            );
+                            };
 // Also export ProceduralLib and ColorUtils if they are used directly in any sub-components that get passed here
 // For now, they are only used within NoiseCanvas, so direct export might not be needed unless used elsewhere.
 // But it's good practice to ensure all dependencies are resolved.

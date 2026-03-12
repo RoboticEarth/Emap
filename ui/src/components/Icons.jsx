@@ -50,5 +50,8 @@ export const Icons = {
     Video: (p) => <IconWrapper {...p}><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></IconWrapper>,
     Blend: (p) => <IconWrapper {...p}><circle cx="9" cy="9" r="7"/><circle cx="15" cy="15" r="7"/></IconWrapper>,
     File: (p) => <IconWrapper {...p}><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></IconWrapper>,
-    FolderPlus: (p) => ( <IconWrapper {...p}><path d="M12 10v6M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></IconWrapper> )
+    FolderPlus: (p) => ( <IconWrapper {...p}><path d="M12 10v6M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></IconWrapper> ),
+    Hash: (p) => <IconWrapper {...p}><line x1="4" x2="20" y1="9" y2="9"/><line x1="4" x2="20" y1="15" y2="15"/><line x1="10" x2="8" y1="3" y2="21"/><line x1="16" x2="14" y1="3" y2="21"/></IconWrapper>,
+    Filter: (p) => <IconWrapper {...p}><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></IconWrapper>,
+    Tags: (p) => <IconWrapper {...p}><path d="M9 5H2v7l6.29 6.29c.94.94 2.48.94 3.42 0l3.58-3.58c.94-.94.94-2.48 0-3.42L9 5Z"/><path d="M6 8.5a.5.5 0 1 1-1 0 .5.5 0 0 1 1 0Z"/><path d="M16 2.6V8.5L21.3 13.8c.9.9.9 2.5 0 3.4L18.7 19.8"/><path d="M11 2.6h5.9L16 2.6Z"/></IconWrapper>
 };

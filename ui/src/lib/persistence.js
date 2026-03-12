@@ -70,12 +70,43 @@ export class PersistenceManager {
             url: '/api/asset/' + encodeURIComponent(item.id) + '?res=' + resParam,
             path: item.path,
             type: item.mime_type.startsWith('video') ? 'video' : 'image',
-            file: { name: item.name }
+            file: { name: item.name },
+            tags: item.tags || []
         }));
     }
 
     async deleteAsset(id) {
         await fetch('/api/asset/' + encodeURIComponent(id), { method: 'DELETE' });
+    }
+
+    async getTags(path) {
+        const res = await fetch(`/api/tags?path=${encodeURIComponent(path)}`);
+        if (!res.ok) return [];
+        return await res.json();
+    }
+
+    async getAllUniqueTags() {
+        const res = await fetch('/api/tags/all');
+        if (!res.ok) return [];
+        return await res.json();
+    }
+
+    async addTag(path, tag) {
+        const res = await fetch('/api/tags/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path, tag })
+        });
+        return res.ok;
+    }
+
+    async removeTag(path, tag) {
+        const res = await fetch('/api/tags/remove', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path, tag })
+        });
+        return res.ok;
     }
 
     async saveState(key, data) {

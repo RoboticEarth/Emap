@@ -31,3 +31,4 @@ vm_testing/run_vm.sh
 *.db
 *.db-shm
 *.db-wal
+TAG_SYSTEM_PLAN.md

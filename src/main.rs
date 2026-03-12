@@ -32,7 +32,7 @@ struct AppState {
 }
 
 #[derive(Serialize, Deserialize)]
-struct AssetMeta { id: String, name: String, path: String, mime_type: String }
+struct AssetMeta { id: String, name: String, path: String, mime_type: String, #[serde(default)] tags: Vec<String> }
 
 #[derive(Serialize, Deserialize)]
 struct ProjectMeta { id: String, name: String, created_at: String }
@@ -237,6 +237,55 @@ async fn reset_monitor_config(data: web::Data<AppState>) -> impl Responder {
     match res { Ok(_) => HttpResponse::Ok().finish(), Err(_) => HttpResponse::InternalServerError().finish() }
 }
 
+#[derive(Deserialize)]
+struct TagRequest { path: String, tag: String }
+
+#[get("/api/tags/all")]
+async fn get_all_tags(data: web::Data<AppState>) -> impl Responder {
+    let res = web::block(move || {
+        let conn = data.system_db.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT DISTINCT tag FROM image_tags ORDER BY tag ASC").unwrap();
+        let tags_iter = stmt.query_map([], |row| row.get::<_, String>(0)).unwrap();
+        tags_iter.map(|x| x.unwrap()).collect::<Vec<String>>()
+    }).await;
+    match res { Ok(tags) => HttpResponse::Ok().json(tags), Err(_) => HttpResponse::InternalServerError().finish() }
+}
+
+#[get("/api/tags")]
+async fn get_tags(data: web::Data<AppState>, query: web::Query<PreviewQuery>) -> impl Responder {
+    let path_str = query.path.clone();
+    if !std::path::Path::new(&path_str).exists() {
+        return HttpResponse::Ok().json(Vec::<String>::new());
+    }
+    let res = web::block(move || {
+        let conn = data.system_db.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT tag FROM image_tags WHERE path = ?1").unwrap();
+        let tags_iter = stmt.query_map(params![path_str], |row| row.get::<_, String>(0)).unwrap();
+        tags_iter.map(|x| x.unwrap()).collect::<Vec<String>>()
+    }).await;
+    match res { Ok(tags) => HttpResponse::Ok().json(tags), Err(_) => HttpResponse::InternalServerError().finish() }
+}
+
+#[post("/api/tags/add")]
+async fn add_tag(data: web::Data<AppState>, req: web::Json<TagRequest>) -> impl Responder {
+    let r = req.into_inner();
+    let res = web::block(move || {
+        let conn = data.system_db.lock().unwrap();
+        conn.execute("INSERT OR IGNORE INTO image_tags (path, tag) VALUES (?1, ?2)", params![r.path, r.tag])
+    }).await;
+    match res { Ok(_) => HttpResponse::Ok().finish(), Err(_) => HttpResponse::InternalServerError().finish() }
+}
+
+#[post("/api/tags/remove")]
+async fn remove_tag(data: web::Data<AppState>, req: web::Json<TagRequest>) -> impl Responder {
+    let r = req.into_inner();
+    let res = web::block(move || {
+        let conn = data.system_db.lock().unwrap();
+        conn.execute("DELETE FROM image_tags WHERE path = ?1 AND tag = ?2", params![r.path, r.tag])
+    }).await;
+    match res { Ok(_) => HttpResponse::Ok().finish(), Err(_) => HttpResponse::InternalServerError().finish() }
+}
+
 #[get("/api/projects")]
 async fn list_projects(data: web::Data<AppState>) -> impl Responder {
     let res = web::block(move || {
@@ -408,27 +457,49 @@ async fn save_kv(data: web::Data<AppState>, key: web::Path<String>, body: String
 
 #[get("/api/assets")]
 async fn list_assets(data: web::Data<AppState>) -> impl Responder {
+    let data_clone = data.clone();
     let res = web::block(move || {
-        let db_guard = data.project_db.lock().unwrap();
-        let conn = match &*db_guard { Some(c) => c, None => return Vec::new() };
+        let db_guard = data_clone.project_db.lock().unwrap();
+        let conn = match &*db_guard { Some(c) => c, None => return Ok(Vec::new()) };
         let mut stmt = conn.prepare("SELECT id, name, path, mime_type FROM assets").unwrap();
-        let assets_iter = stmt.query_map([], |row| Ok(AssetMeta { id: row.get(0)?, name: row.get(1)?, path: row.get(2)?, mime_type: row.get(3)? })).unwrap();
-        assets_iter.map(|x| x.unwrap()).collect::<Vec<AssetMeta>>()
+        let assets_iter = stmt.query_map([], |row| {
+            Ok(AssetMeta { 
+                id: row.get(0)?, 
+                name: row.get(1)?, 
+                path: row.get(2)?, 
+                mime_type: row.get(3)?,
+                tags: Vec::new()
+            })
+        }).unwrap();
+        
+        let mut assets: Vec<AssetMeta> = assets_iter.map(|x| x.unwrap()).collect();
+        
+        // Fetch tags from system_db
+        let sys_conn = data_clone.system_db.lock().unwrap();
+        for asset in &mut assets {
+            let mut tag_stmt = sys_conn.prepare("SELECT tag FROM image_tags WHERE path = ?1").unwrap();
+            let tags = tag_stmt.query_map(params![asset.path], |r| r.get::<_, String>(0)).unwrap()
+                .map(|x| x.unwrap()).collect();
+            asset.tags = tags;
+        }
+        
+        Ok::<Vec<AssetMeta>, rusqlite::Error>(assets)
     }).await;
-    match res { Ok(assets) => HttpResponse::Ok().json(assets), Err(_) => HttpResponse::InternalServerError().finish() }
+    match res { Ok(Ok(assets)) => HttpResponse::Ok().json(assets), _ => HttpResponse::InternalServerError().finish() }
 }
 
 #[derive(Deserialize)]
 struct ListParams { path: Option<String> }
 #[derive(Serialize)]
-struct FileItem { name: String, path: String, #[serde(rename = "type")] type_: String, size: String }
+struct FileItem { name: String, path: String, #[serde(rename = "type")] type_: String, size: String, #[serde(default)] tags: Vec<String> }
 #[derive(Serialize)]
 struct ListResponse { path: String, items: Vec<FileItem> }
 
 #[get("/api/fs/list")]
-async fn list_files(web::Query(params): web::Query<ListParams>) -> impl Responder {
+async fn list_files(data: web::Data<AppState>, web::Query(params): web::Query<ListParams>) -> impl Responder {
     let current_path = params.path.unwrap_or_default();
     let current_path_clone = current_path.clone();
+    let data_clone = data.clone();
     let res = web::block(move || {
         let mut items = Vec::new();
         let path = if current_path_clone.is_empty() { std::env::current_dir().unwrap_or_default().join("assets") } else { PathBuf::from(&current_path_clone) };
@@ -442,10 +513,29 @@ async fn list_files(web::Query(params): web::Query<ListParams>) -> impl Responde
                         name, path: entry.path().to_string_lossy().to_string(),
                         type_: if is_dir { "dir".to_string() } else { "file".to_string() },
                         size: if is_dir { "".to_string() } else { format!("{:.2} MB", meta.as_ref().map(|m| m.len()).unwrap_or(0) as f64 / 1024.0 / 1024.0) },
+                        tags: Vec::new(),
                     });
                 }
             }
         }
+        
+        // Fetch tags for files - ONLY if the path is within the current working directory
+        let sys_conn = data_clone.system_db.lock().unwrap();
+        let cwd = std::env::current_dir().unwrap_or_default();
+        
+        for item in &mut items {
+            if item.type_ == "file" {
+                let item_path = PathBuf::from(&item.path);
+                // Only provide tags if the file is local (within CWD)
+                if item_path.starts_with(&cwd) {
+                    let mut tag_stmt = sys_conn.prepare("SELECT tag FROM image_tags WHERE path = ?1").unwrap();
+                    let tags = tag_stmt.query_map(params![item.path], |r| r.get::<_, String>(0)).unwrap()
+                        .map(|x| x.unwrap()).collect();
+                    item.tags = tags;
+                }
+            }
+        }
+
         items.sort_by(|a, b| if a.type_ == "dir" && b.type_ != "dir" { std::cmp::Ordering::Less } else if a.type_ != "dir" && b.type_ == "dir" { std::cmp::Ordering::Greater } else { a.name.cmp(&b.name) });
         ListResponse { path: current_path_clone, items }
     }).await;
@@ -624,6 +714,7 @@ async fn get_drives() -> impl Responder {
                                 path: entry.path().to_string_lossy().to_string(),
                                 type_: "drive".to_string(),
                                 size: "".to_string(),
+                                tags: Vec::new(),
                             });
                         }
                     }
@@ -865,7 +956,18 @@ fn main() {
             system_conn.busy_timeout(std::time::Duration::from_millis(5000)).unwrap();
             let _ = system_conn.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(()));
             system_conn.execute("CREATE TABLE IF NOT EXISTS system_data (key TEXT PRIMARY KEY, value TEXT)", []).unwrap();
+            system_conn.execute("CREATE TABLE IF NOT EXISTS image_tags (path TEXT, tag TEXT, PRIMARY KEY (path, tag))", []).unwrap();
             
+            // Cleanup orphaned tags: Remove tags for files that no longer exist
+            if let Ok(mut stmt) = system_conn.prepare("SELECT DISTINCT path FROM image_tags") {
+                let paths: Vec<String> = stmt.query_map([], |row| row.get(0)).unwrap().map(|x| x.unwrap()).collect();
+                for path_str in paths {
+                    if !std::path::Path::new(&path_str).exists() {
+                        let _ = system_conn.execute("DELETE FROM image_tags WHERE path = ?1", params![path_str]);
+                    }
+                }
+            }
+
             // Global DB for project management
             let global_conn = Connection::open_with_flags(
                 "system_data/projects.db",
@@ -902,7 +1004,9 @@ fn main() {
                     .app_data(web::PayloadConfig::new(10 * 1024 * 1024 * 1024))
                     .app_data(app_state.clone())
                     .service(index).service(dashboard).service(projection)
-                    .service(get_monitors).service(register_monitor).service(save_monitor_config).service(get_monitor_config).service(reset_monitor_config).service(list_projects).service(delete_project).service(create_project)
+                    .service(get_monitors).service(register_monitor).service(save_monitor_config).service(get_monitor_config).service(reset_monitor_config)
+                    .service(get_all_tags).service(get_tags).service(add_tag).service(remove_tag)
+                    .service(list_projects).service(delete_project).service(create_project)
                     .service(load_project).service(get_active_project).service(get_kv).service(save_kv).service(list_assets)
                     .service(sync_all)
                     .service(list_files).service(import_asset).service(save_asset).service(get_asset).service(delete_asset)
