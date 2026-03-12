@@ -155,8 +155,13 @@ canvas {
 .low-resource-mode .backdrop-blur-md,
 .low-resource-mode .backdrop-blur-xl,
 .low-resource-mode .backdrop-blur-sm,
-.low-resource-mode .backdrop-blur-lg {
+.low-resource-mode .backdrop-blur-lg,
+.low-resource-mode .backdrop-blur,
+.low-resource-mode [class*="backdrop-blur"] {
     backdrop-filter: none !important;
+    background-color: black !important;
+    transition: none !important;
+    animation: none !important;
 }
 
 .low-resource-mode .low-resource-mode-panel {

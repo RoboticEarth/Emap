@@ -465,6 +465,18 @@ async fn delete_fs_file(data: web::Data<AppState>, req: web::Json<DeleteFileRequ
     println!("[BACKEND] Request to delete file from disk: {:?}", path);
     
     let res = web::block(move || {
+        // Delete previews first if they exist
+        let base_name = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        let ext = path.extension().unwrap_or_default().to_string_lossy().to_string();
+        let run_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let previews_dir = run_dir.join("assets").join(".previews");
+        
+        let p1080 = previews_dir.join(format!("{}_1080p.{}", base_name, ext));
+        let p720 = previews_dir.join(format!("{}_720p.{}", base_name, ext));
+        
+        if p1080.exists() { let _ = fs::remove_file(p1080); }
+        if p720.exists() { let _ = fs::remove_file(p720); }
+
         // 1. Delete from Disk
         let disk_res = if path.is_dir() {
             fs::remove_dir_all(&path)
@@ -486,6 +498,75 @@ async fn delete_fs_file(data: web::Data<AppState>, req: web::Json<DeleteFileRequ
         Ok(Ok(_)) => HttpResponse::Ok().finish(),
         _ => HttpResponse::InternalServerError().finish()
     }
+}
+
+#[derive(Deserialize)]
+struct ProcessQuery { name: String }
+
+#[post("/api/fs/process")]
+async fn process_image_asset(query: web::Query<ProcessQuery>) -> impl Responder {
+    let name = query.name.clone();
+    let res = web::block(move || {
+        let run_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let assets_dir = run_dir.join("assets");
+        let previews_dir = assets_dir.join(".previews");
+        let _ = fs::create_dir_all(&previews_dir);
+        
+        let src = assets_dir.join(&name);
+        if !src.exists() { return Err("Not found"); }
+        
+        let mime_type = mime_guess::from_path(&src).first_or_octet_stream().to_string();
+        if mime_type.starts_with("image/") && !mime_type.contains("svg") {
+            let base_name = src.file_stem().unwrap_or_default().to_string_lossy().to_string();
+            let ext = src.extension().unwrap_or_default().to_string_lossy().to_string();
+            let p1080 = previews_dir.join(format!("{}_1080p.{}", base_name, ext));
+            let p720 = previews_dir.join(format!("{}_720p.{}", base_name, ext));
+            
+            let _ = std::process::Command::new("magick").arg(&src).arg("-resize").arg("1920x1080>").arg(&p1080).output();
+            let _ = std::process::Command::new("magick").arg(&src).arg("-resize").arg("1280x720>").arg(&p720).output();
+        }
+        Ok(())
+    }).await;
+    match res { Ok(Ok(_)) => HttpResponse::Ok().finish(), _ => HttpResponse::InternalServerError().finish() }
+}
+
+#[derive(Deserialize)]
+struct PreviewQuery { path: String }
+
+#[get("/api/fs/preview")]
+async fn get_fs_preview(req: HttpRequest, query: web::Query<PreviewQuery>) -> impl Responder {
+    let path = PathBuf::from(&query.path);
+    if !path.exists() { return HttpResponse::NotFound().finish().customize(); }
+    
+    let base_name = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+    let ext = path.extension().unwrap_or_default().to_string_lossy().to_string();
+    let run_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let assets_dir = run_dir.join("assets");
+    
+    // Check if it's a server asset (in the assets folder)
+    let is_server_asset = path.starts_with(&assets_dir);
+    
+    let p1080 = assets_dir.join(".previews").join(format!("{}_1080p.{}", base_name, ext));
+    let p720 = assets_dir.join(".previews").join(format!("{}_720p.{}", base_name, ext));
+    
+    let is_low_res = req.query_string().contains("res=720");
+    let target_preview = if is_low_res { p720 } else { p1080 };
+
+    if target_preview.exists() {
+        return match NamedFile::open_async(target_preview).await {
+            Ok(f) => f.into_response(&req).customize().insert_header(("X-Is-Optimized", "true")),
+            Err(_) => HttpResponse::NotFound().finish().customize()
+        };
+    }
+
+    // Strictly DO NOT serve original high-res images as previews for server assets OR USB drives
+    let mime = mime_guess::from_path(&path).first_or_octet_stream();
+    if mime.type_() == "image" {
+        return HttpResponse::NotFound().finish().customize(); // Trigger "Processing" or "No Preview" in UI
+    }
+
+    // For non-images (videos etc), we can serve the file icon or original if it's small, but safe bet is 404
+    HttpResponse::NotFound().finish().customize()
 }
 
 #[post("/api/fs/copy_to_assets")]
@@ -588,6 +669,23 @@ async fn import_asset(data: web::Data<AppState>, req: web::Json<ImportRequest>) 
             params![asset_id, name, req_path, mime_type]
         ).map_err(|e| e.to_string())?;
         
+        if mime_type.starts_with("image/") && !mime_type.contains("svg") {
+            let run_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let previews_dir = run_dir.join("assets").join(".previews");
+            let _ = fs::create_dir_all(&previews_dir);
+            let base_name = src.file_stem().unwrap_or_default().to_string_lossy().to_string();
+            let ext = src.extension().unwrap_or_default().to_string_lossy().to_string();
+            let p1080 = previews_dir.join(format!("{}_1080p.{}", base_name, ext));
+            let p720 = previews_dir.join(format!("{}_720p.{}", base_name, ext));
+            
+            if !p1080.exists() || overwrite {
+                let _ = std::process::Command::new("magick").arg(&src).arg("-resize").arg("1920x1080>").arg(&p1080).output();
+            }
+            if !p720.exists() || overwrite {
+                let _ = std::process::Command::new("magick").arg(&src).arg("-resize").arg("1280x720>").arg(&p720).output();
+            }
+        }
+        
         Ok(asset_id)
     }).await;
 
@@ -635,8 +733,11 @@ async fn save_asset(data: web::Data<AppState>, id: web::Path<String>, req: HttpR
     if res.unwrap_or(false) { HttpResponse::Ok().finish() } else { HttpResponse::InternalServerError().finish() }
 }
 
+#[derive(Deserialize)]
+struct GetAssetQuery { res: Option<u32> }
+
 #[get("/api/asset/{id}")]
-async fn get_asset(data: web::Data<AppState>, req: HttpRequest, id: web::Path<String>) -> impl Responder {
+async fn get_asset(data: web::Data<AppState>, req: HttpRequest, id: web::Path<String>, query: web::Query<GetAssetQuery>) -> impl Responder {
     let asset_id = id.into_inner();
     
     let path_res = web::block(move || {
@@ -645,10 +746,20 @@ async fn get_asset(data: web::Data<AppState>, req: HttpRequest, id: web::Path<St
         conn.query_row("SELECT path FROM assets WHERE id = ?1", params![asset_id], |r| r.get::<_, String>(0)).ok()
     }).await;
 
-    let file_path = match path_res {
-        Ok(Some(p)) => p,
+    let mut file_path = match path_res {
+        Ok(Some(p)) => PathBuf::from(p),
         _ => return HttpResponse::NotFound().finish()
     };
+
+    if let Some(res) = query.res {
+        let base_name = file_path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        let ext = file_path.extension().unwrap_or_default().to_string_lossy().to_string();
+        let run_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let preview_path = run_dir.join("assets").join(".previews").join(format!("{}_{}p.{}", base_name, res, ext));
+        if preview_path.exists() {
+            file_path = preview_path;
+        }
+    }
 
     match NamedFile::open_async(file_path).await { 
         Ok(file) => file.into_response(&req), 
@@ -795,7 +906,7 @@ fn main() {
                     .service(load_project).service(get_active_project).service(get_kv).service(save_kv).service(list_assets)
                     .service(sync_all)
                     .service(list_files).service(import_asset).service(save_asset).service(get_asset).service(delete_asset)
-                    .service(get_drives).service(delete_fs_file).service(copy_to_assets)
+                    .service(get_drives).service(delete_fs_file).service(copy_to_assets).service(process_image_asset).service(get_fs_preview)
                     .service(Files::new("/", "./ui/dist").index_file("index.html"))
             })
             .bind(("0.0.0.0", 8080)).unwrap();

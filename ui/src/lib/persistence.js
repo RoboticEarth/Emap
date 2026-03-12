@@ -63,9 +63,11 @@ export class PersistenceManager {
         const res = await fetch('/api/assets', { cache: 'no-store' });
         if (!res.ok) return [];
         const list = await res.json();
+        const isLowResource = localStorage.getItem('emap_low_resource_mode') === 'true';
+        const resParam = isLowResource ? '720' : '1080';
         return list.map(item => ({
             id: item.id,
-            url: '/api/asset/' + encodeURIComponent(item.id),
+            url: '/api/asset/' + encodeURIComponent(item.id) + '?res=' + resParam,
             path: item.path,
             type: item.mime_type.startsWith('video') ? 'video' : 'image',
             file: { name: item.name }

@@ -124,11 +124,12 @@ const WarpedTextureGrid = ({ wallPoints }) => {
     return <g opacity="0.6">{grid}</g>;
 };
 
-const FileExplorer = ({ isOpen, onClose, onImport, showConfirm, showAlert, hiddenDrives = [], setHiddenDrives }) => {
+const FileExplorer = ({ isOpen, onClose, onImport, showConfirm, showAlert, hiddenDrives = [], setHiddenDrives, lowResourceMode }) => {
     const [currentPath, setCurrentPath] = useState('');
     const [items, setItems] = useState([]);
     const [selectedPaths, setSelectedPaths] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [importProgress, setImportProgress] = useState(null); // { current: 0, total: 0, phase: 'import' }
     const [drives, setDrives] = useState([]);
     const [activeTab, setActiveTab] = useState('server'); // 'server' or drive path
     
@@ -197,51 +198,94 @@ const FileExplorer = ({ isOpen, onClose, onImport, showConfirm, showAlert, hidde
     };
 
     const handleImportProcess = async () => {
+        const sourceTab = activeTab;
+        
+        if (sourceTab === 'server') {
+            // Instant addition for server assets
+            for (const path of selectedPaths) {
+                await db.importAssetFromPath(path, false);
+            }
+            onImport();
+            onClose();
+            return;
+        }
+
         setLoading(true);
+        // Phase 1: Importing from USB
         let currentBulkDecision = null;
+        let count = 0;
+        const importedNames = [];
 
         for (const path of selectedPaths) {
             const fileName = path.split('/').pop() || path.split('\\').pop();
             
             if (currentBulkDecision) {
                 if (currentBulkDecision === 'overwrite') {
-                    if (activeTab === 'server') {
+                    if (sourceTab === 'server') {
                         await db.importAssetFromPath(path, true);
                     } else {
                         await db.copyFileToAssets(path, true);
                     }
+                    importedNames.push(fileName);
                 }
+                count++;
+                setImportProgress({ current: count, total: selectedPaths.length, phase: 'import' });
                 continue;
             }
 
-            const method = activeTab === 'server' ? db.importAssetFromPath.bind(db) : db.copyFileToAssets.bind(db);
+            const method = sourceTab === 'server' ? db.importAssetFromPath.bind(db) : db.copyFileToAssets.bind(db);
             const result = await method(path, false);
             
             if (result && result.conflict) {
-                // Wait for user decision
                 const decision = await new Promise((resolve) => {
                     setConflict({ path, name: fileName, resolve });
                 });
-                
                 setConflict(null);
                 
                 if (decision === 'overwrite') {
                     await method(path, true);
                     if (applyToAll) currentBulkDecision = 'overwrite';
+                    importedNames.push(fileName);
                 } else {
                     if (applyToAll) currentBulkDecision = 'skip';
+                }
+            } else {
+                importedNames.push(fileName);
+            }
+            
+            count++;
+            setImportProgress({ current: count, total: selectedPaths.length, phase: 'import' });
+        }
+
+        // Switch to server tab and show files before processing
+        if (sourceTab !== 'server') {
+            setActiveTab('server');
+            await loadPath('');
+
+            // Phase 2: Processing (ONLY for new files copied from USB)
+            if (importedNames.length > 0) {
+                setImportProgress({ current: 0, total: importedNames.length, phase: 'process' });
+                count = 0;
+                for (const name of importedNames) {
+                    try {
+                        await fetch(`/api/fs/process?name=${encodeURIComponent(name)}`, { method: 'POST' });
+                        // Trigger a partial update or wait for the images to reload themselves
+                    } catch (e) { console.error("Process error", e); }
+                    count++;
+                    setImportProgress({ current: count, total: importedNames.length, phase: 'process' });
                 }
             }
         }
         
+        setImportProgress(null);
         setLoading(false);
-        if (activeTab === 'server') {
-            onImport(); // Only reload library if we actually linked something to it
+        
+        if (sourceTab === 'server') {
+            onImport(); 
             onClose();
         } else {
-            // Switch to server tab to show where files went, but no annoying alert
-            setActiveTab('server');
-            loadPath('');
+            // Refresh to show final state
+            await loadPath('');
         }
     };
 
@@ -348,12 +392,22 @@ const FileExplorer = ({ isOpen, onClose, onImport, showConfirm, showAlert, hidde
                     </div>
                 </div>
 
+                {importProgress && (
+                    <div className="mx-4 mt-4 p-3 bg-blue-600/10 border border-blue-500/30 rounded-lg flex flex-col gap-2 animate-in fade-in slide-in-from-top-2">
+                        <div className="flex justify-between items-center">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-blue-400">
+                                {importProgress.phase === 'import' ? 'Phase 1: Importing Files' : 'Phase 2: Optimizing Images'}
+                            </span>
+                            <span className="text-[10px] font-mono text-blue-300">{importProgress.current} / {importProgress.total}</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                            <div className="h-full bg-blue-500 transition-all duration-500 ease-out" style={{ width: `${(importProgress.current / importProgress.total) * 100}%` }}></div>
+                        </div>
+                    </div>
+                )}
+
                 <div className="flex-1 overflow-y-auto p-4">
-                    {loading && !conflict ? <div className="text-center p-8 flex flex-col items-center gap-4">
-                        <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                        <span className="text-gray-500 text-xs font-bold animate-pulse uppercase tracking-widest">Processing Files...</span>
-                    </div> : (
-                        <div className="grid grid-cols-4 md:grid-cols-5 gap-3">
+                    <div className="grid grid-cols-4 md:grid-cols-5 gap-3">
                             {items.map((item, i) => ( 
                                 <div 
                                     key={i} 
@@ -367,11 +421,37 @@ const FileExplorer = ({ isOpen, onClose, onImport, showConfirm, showAlert, hidde
                                     )}
                                     <div className="w-full aspect-square bg-black mb-2 flex items-center justify-center overflow-hidden rounded-md border border-zinc-800 shadow-inner group/item relative">
                                         {item.type === 'file' ? ( 
-                                            <img 
-                                                src={`/api/asset/${encodeURIComponent(item.name)}`} 
-                                                className="w-full h-full object-cover" 
-                                                onError={(e) => {e.target.style.display='none'; e.target.nextSibling.style.display='block'}}
-                                            /> 
+                                            <div className="w-full h-full relative">
+                                                {/* Only show image if not in the middle of an import phase for the server tab */}
+                                                {!(importProgress?.phase === 'import' && activeTab === 'server') && (
+                                                    <img 
+                                                        key={`${item.path}-${importProgress?.phase || 'stable'}`}
+                                                        src={`/api/fs/preview?path=${encodeURIComponent(item.path)}${lowResourceMode ? '&res=720' : '&res=1080'}${importProgress ? `&t=${Date.now()}` : ''}`} 
+                                                        className="w-full h-full object-cover transition-opacity duration-300" 
+                                                        style={{ opacity: 0 }}
+                                                        onLoad={(e) => {
+                                                            const overlay = e.target.nextSibling;
+                                                            if (overlay) overlay.style.display = 'none';
+                                                            e.target.style.opacity = '1';
+                                                        }}
+                                                        onError={(e) => {
+                                                            const isImage = (item.name.toLowerCase().endsWith('.jpg') || item.name.toLowerCase().endsWith('.png') || item.name.toLowerCase().endsWith('.jpeg') || item.name.toLowerCase().endsWith('.webp'));
+                                                            if (isImage && activeTab === 'server') {
+                                                                // Show processing overlay instead of broken image
+                                                                e.target.style.display = 'none';
+                                                                if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
+                                                            } else {
+                                                                e.target.style.display='none'; 
+                                                                if (e.target.parentElement.nextSibling) e.target.parentElement.nextSibling.style.display='block';
+                                                            }
+                                                        }}
+                                                    />
+                                                )}
+                                                <div className="absolute inset-0 bg-black/60 flex-col items-center justify-center gap-1 hidden pointer-events-none">
+                                                    <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                                                    <span className="text-[8px] font-bold text-blue-400 uppercase">Processing</span>
+                                                </div>
+                                            </div>
                                         ) : null}
                                         <div style={{display: item.type === 'file' ? 'none' : 'block'}}>
                                             {item.type === 'dir' || item.type === 'drive' ? ( 
@@ -395,8 +475,7 @@ const FileExplorer = ({ isOpen, onClose, onImport, showConfirm, showAlert, hidde
                                 </div> 
                             ))}
                             {items.length === 0 && <div className="col-span-full text-center p-12 text-gray-600 text-xs font-bold uppercase tracking-widest opacity-50">Empty Directory</div>}
-                        </div>
-                    )}
+                    </div>
                 </div>
                 
                 <div className="p-4 border-t border-zinc-800 bg-zinc-950 flex justify-between items-center">
@@ -419,7 +498,7 @@ const FileExplorer = ({ isOpen, onClose, onImport, showConfirm, showAlert, hidde
     );
 };
 
-const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, hiddenDrives, setHiddenDrives, initialTab = 'image' }) => {
+const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, hiddenDrives, setHiddenDrives, lowResourceMode, initialTab = 'image' }) => {
 
     const [activeTab, setActiveTab] = useState(initialTab);
 
@@ -487,16 +566,16 @@ const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, hidde
 
     return (
         <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-8">
-            <FileExplorer 
-                isOpen={showFileExplorer} 
-                onClose={() => setShowFileExplorer(false)} 
-                onImport={handleImport} 
-                showConfirm={showConfirm} 
-                showAlert={showAlert} 
+            <FileExplorer
+                isOpen={showFileExplorer}
+                onClose={() => setShowFileExplorer(false)}
+                onImport={handleImport}
+                showConfirm={showConfirm}
+                showAlert={showAlert}
                 hiddenDrives={hiddenDrives}
                 setHiddenDrives={setHiddenDrives}
-            />
-            <div className="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-4xl h-[80vh] flex flex-col shadow-2xl overflow-hidden">
+                lowResourceMode={lowResourceMode}
+            />            <div className="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-4xl h-[80vh] flex flex-col shadow-2xl overflow-hidden">
                 <div className="p-4 border-b border-zinc-700 flex justify-between items-center bg-zinc-950">
                     <h2 className="text-lg font-bold text-white flex items-center gap-2"><Folder size={20} className="text-blue-400"/> Asset Library</h2>
                     <button onClick={onClose} className="text-gray-400 hover:text-white"><X size={24}/></button>
@@ -1151,8 +1230,8 @@ const Node = ({ id, type, x, y, label, selected, onDragStart, onHandleClick, dat
                             {data?.value ? (
                                 <>
                                     {type === 'video' ? <video src={data.value} className="w-full h-full object-contain" muted /> : <img src={data.value} className="w-full h-full object-contain" />}
-                                    <button onClick={() => onOpenAssetBrowser(type, (asset) => updateData(id, { value: asset.url, assetId: asset.id, name: asset.file.name }))} className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center text-sm transition-opacity font-bold">
-                                        <Upload size={16} className="mr-2"/> Change Media
+                                    <button onClick={() => onOpenAssetBrowser(type, (asset) => updateData(id, { value: asset.url, assetId: asset.id, name: asset.file.name }))} className="absolute inset-0 bg-black/80 opacity-0 group-hover:opacity-100 flex items-center justify-center text-[10px] transition-all duration-300 font-bold uppercase tracking-widest text-blue-400 border border-blue-500/20">
+                                        <Upload size={14} className="mr-2"/> Change Media
                                     </button>
                                 </>
                             ) : (
@@ -1479,6 +1558,34 @@ const NodeEditor = ({ activeSelection, currentCue, updateCueData, walls, setWall
                 </svg>
                 {nodes.map(node => ( <div key={node.id}><Node id={node.id} {...node} selected={draggingId === node.id} isConnecting={!!connectSource} activeConnectionId={connectSource?.id} onDragStart={handleDragStart} onHandleClick={handleHandleClick} updateData={updateNodeData} onDelete={deleteNode} onOpenAssetBrowser={onOpenAssetBrowser} /></div>))}
             </div>
+            
+            {nodes.some(n => {
+                const viewportLeft = -pan.x / zoom;
+                const viewportTop = -pan.y / zoom;
+                const viewportRight = viewportLeft + window.innerWidth / zoom;
+                const viewportBottom = viewportTop + window.innerHeight / zoom;
+                return n.x > viewportRight || n.x + 250 < viewportLeft || n.y > viewportBottom || n.y + 150 < viewportTop;
+            }) && (
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-blue-600/20 text-blue-400 border border-blue-500/50 px-4 py-1 rounded-full text-[10px] font-bold tracking-widest flex items-center gap-2 animate-bounce-subtle pointer-events-none z-50">
+                    <div className="w-1 h-4 bg-blue-500 rounded-full animate-pulse"></div>
+                    Nodes Outside Viewport
+                </div>
+            )}
+            
+            <div className="absolute bottom-4 right-4 bg-zinc-950/80 backdrop-blur border border-zinc-800 rounded-xl shadow-2xl pointer-events-none z-50 overflow-hidden" style={{ width: 160, height: 120 }}>
+                <svg width="100%" height="100%" viewBox="-1000 -1000 4000 4000">
+                    <rect x={-pan.x / zoom} y={-pan.y / zoom} width={window.innerWidth / zoom} height={window.innerHeight / zoom} fill="none" stroke="#3b82f6" strokeWidth="40" strokeDasharray="100,50" />
+                    {nodes.map(n => (
+                        <rect key={`mini-${n.id}`} x={n.x} y={n.y} width="256" height="150" fill={n.type === 'output' ? '#a855f7' : '#6b7280'} rx="40" />
+                    ))}
+                    {connections.map((conn, i) => {
+                        const fromNode = nodes.find(n => n.id === conn.from);
+                        const toNode = nodes.find(n => n.id === conn.to);
+                        if(!fromNode || !toNode) return null;
+                        return <line key={`mini-conn-${i}`} x1={fromNode.x + 256} y1={fromNode.y + 75} x2={toNode.x} y2={toNode.y + 75} stroke="#555" strokeWidth="20" />;
+                    })}
+                </svg>
+            </div>
         </div>
     );
 };
@@ -1557,14 +1664,44 @@ const TransitionEditor = ({ cue, updateCue }) => {
 
 // --- MAIN APP ---
 
-const WallStackVisualizer = ({ walls, activeWallId }) => {
+const WallStackVisualizer = ({ walls, activeWallId, folders }) => {
     if (walls.length === 0) return null;
+
+    const reversedWalls = walls.slice().reverse();
+    
+    // Group contiguous walls in the visual stack that belong to the same folder
+    const groupLines = [];
+    let currentFolderId = null;
+    let startIdx = -1;
+    
+    reversedWalls.forEach((wall, i) => {
+        if (wall.folderId !== currentFolderId) {
+            if (currentFolderId !== null && startIdx !== -1) {
+                groupLines.push({ folderId: currentFolderId, start: startIdx, end: i - 1 });
+            }
+            currentFolderId = wall.folderId;
+            startIdx = wall.folderId !== null ? i : -1;
+        }
+    });
+    if (currentFolderId !== null && startIdx !== -1) {
+        groupLines.push({ folderId: currentFolderId, start: startIdx, end: reversedWalls.length - 1 });
+    }
 
     return (
         <div className="mt-4 pt-4 border-t border-zinc-700">
             <h3 className="text-xs font-bold text-gray-500 mb-3 flex items-center gap-1"><Layers size={12}/> STACKING ORDER</h3>
-            <div className="relative h-24 bg-zinc-800/50 rounded-lg p-4 flex items-center justify-start overflow-x-auto">
-                {walls.slice().reverse().map((wall, index) => (
+            <div className="relative h-28 bg-zinc-800/50 rounded-lg p-4 flex items-center justify-start overflow-x-auto">
+                {groupLines.map((group, i) => {
+                    const folder = folders.find(f => f.id === group.folderId);
+                    if (!folder) return null;
+                    const left = 10 + group.start * 15;
+                    const width = (group.end - group.start) * 15 + 12;
+                    return (
+                        <div key={`group-line-${i}`} className="absolute top-2 h-1 rounded-full transition-all duration-300" style={{ left: `${left}%`, width: `${width}%`, backgroundColor: folder.color || '#3b82f6' }}>
+                        </div>
+                    );
+                })}
+                {reversedWalls.map((wall, index) => (
                     <div
                         key={wall.id}
                         title={`${wall.name}`}
@@ -1572,11 +1709,12 @@ const WallStackVisualizer = ({ walls, activeWallId }) => {
                         style={{
                             backgroundColor: wall.color,
                             left: `${10 + index * 15}%`,
-                            zIndex: walls.length - index,
+                            top: '28px',
+                            zIndex: reversedWalls.length - index,
                             transform: `translateY(${wall.id === activeWallId ? '-8px' : '0px'}) scale(${wall.id === activeWallId ? '1.1' : '1'})`
                         }}
                     >
-                        {walls.length - index}
+                        {reversedWalls.length - index}
                     </div>
                 ))}
             </div>
@@ -1584,11 +1722,10 @@ const WallStackVisualizer = ({ walls, activeWallId }) => {
     );
 };
 
-const WallItem = ({ wall, activeWallId, setActiveWallId, moveWall, deleteWall }) => {
+const WallItem = ({ wall, activeWallId, setActiveWallId, setActiveFolderId, moveWall, deleteWall }) => {
     return (
-        <div 
-            onClick={() => setActiveWallId(wall.id)} 
-            className={`flex justify-between items-center p-2 rounded text-xs cursor-pointer ${wall.id === activeWallId ? 'bg-zinc-700 text-white border border-zinc-600' : 'text-gray-400 hover:bg-zinc-800/50'}`}
+        <div
+            onClick={() => { setActiveWallId(wall.id); if (setActiveFolderId) setActiveFolderId(null); }}            className={`flex justify-between items-center p-2 rounded text-xs cursor-pointer ${wall.id === activeWallId ? 'bg-zinc-700 text-white border border-zinc-600' : 'text-gray-400 hover:bg-zinc-800/50'}`}
         >
             <div className="flex items-center gap-2 truncate">
                 <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: wall.color }}></div>
@@ -1605,33 +1742,42 @@ const WallItem = ({ wall, activeWallId, setActiveWallId, moveWall, deleteWall })
     );
 };
 
-const FolderItem = ({ folder, walls, activeWallId, setActiveWallId, setWalls, setFolders, moveWall, deleteWall, showConfirm }) => {
+const FolderItem = ({ folder, walls, activeWallId, setActiveWallId, activeFolderId, setActiveFolderId, setWalls, setFolders, moveWall, moveFolder, deleteWall, showConfirm }) => {
     const folderWalls = walls.filter(w => w.folderId === folder.id);
     return (
         <div className="mb-2">
-            <div className="flex items-center gap-2 p-2 bg-zinc-800 hover:bg-zinc-700 rounded cursor-pointer text-xs font-bold text-gray-300" onClick={() => setFolders(prev => prev.map(f => f.id === folder.id ? {...f, isOpen: !f.isOpen} : f))}>
-                {folder.isOpen ? <ChevronDown size={14}/> : <ChevronRight size={14}/>} <Folder size={14} className="text-blue-400" /> {folder.name} <span className="ml-auto text-[10px] text-gray-500">{folderWalls.length}</span>
-                <button 
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        showConfirm(
-                            "Delete Group", 
-                            `Are you sure you want to delete the group "${folder.name}"? The objects inside will not be deleted.`, 
-                            () => {
-                                setFolders(prev => prev.filter(f => f.id !== folder.id));
-                                setWalls(prev => prev.map(w => w.folderId === folder.id ? {...w, folderId: null} : w));
-                            }
-                        );
-                    }} 
-                    className="text-gray-500 hover:text-red-400 ml-2"
-                >
-                    <Trash2 size={12}/>
-                </button>
+            <div className={`flex items-center gap-2 p-2 rounded cursor-pointer text-xs font-bold ${folder.id === activeFolderId ? 'bg-zinc-700 text-white border border-zinc-600' : 'bg-zinc-800 hover:bg-zinc-700 text-gray-300'}`} onClick={() => { setActiveFolderId(folder.id); setActiveWallId(null); }}>
+                <span onClick={(e) => { e.stopPropagation(); setFolders(prev => prev.map(f => f.id === folder.id ? {...f, isOpen: !f.isOpen} : f)); }}>
+                    {folder.isOpen ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
+                </span> <Folder size={14} className="text-blue-400" /> {folder.name} <span className="ml-auto text-[10px] text-gray-500">{folderWalls.length}</span>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="flex flex-col -my-1">
+                        <button onClick={(e) => {e.stopPropagation(); moveFolder(folder.id, -1)}} className="p-0.5 rounded hover:bg-zinc-600 text-gray-400 hover:text-white"><ChevronUp size={16}/></button>
+                        <button onClick={(e) => {e.stopPropagation(); moveFolder(folder.id, 1)}} className="p-0.5 rounded hover:bg-zinc-600 text-gray-400 hover:text-white"><ChevronDown size={16}/></button>
+                    </div>
+                    <button 
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            showConfirm(
+                                "Delete Group", 
+                                `Are you sure you want to delete the group "${folder.name}"? The objects inside will not be deleted.`, 
+                                () => {
+                                    setFolders(prev => prev.filter(f => f.id !== folder.id));
+                                    setWalls(prev => prev.map(w => w.folderId === folder.id ? {...w, folderId: null} : w));
+                                    if(activeFolderId === folder.id) setActiveFolderId(null);
+                                }
+                            );
+                        }} 
+                        className="p-1 rounded hover:bg-red-900/50 text-gray-500 hover:text-red-400"
+                    >
+                        <Trash2 size={14}/>
+                    </button>
+                </div>
             </div>
             {folder.isOpen && (
                 <div className="ml-2 pl-2 border-l border-zinc-700 mt-1 space-y-1">
                     {folderWalls.map(wall => (
-                        <WallItem key={wall.id} wall={wall} activeWallId={activeWallId} setActiveWallId={setActiveWallId} moveWall={moveWall} deleteWall={deleteWall} />
+                        <WallItem key={wall.id} wall={wall} activeWallId={activeWallId} setActiveWallId={setActiveWallId} setActiveFolderId={setActiveFolderId} moveWall={moveWall} deleteWall={deleteWall} />
                     ))}
                 </div>
             )}
@@ -1781,8 +1927,9 @@ export default function App() {
     const showAlert = (title, message) => setModal({ isOpen: true, title, message, onConfirm: () => setModal(prev => ({ ...prev, isOpen: false })), type: 'alert' });
 
     const [walls, setWalls] = useState([{ id: 1, name: "Main Wall", color: "#84cc16", folderId: null, points: [{ x: 100, y: 100 }, { x: 500, y: 100 }, { x: 500, y: 325 }, { x: 100, y: 325 }] }]);
-    const [folders, setFolders] = useState([]); 
+    const [folders, setFolders] = useState([]);
     const [activeWallId, setActiveWallId] = useState(1);
+    const [activeFolderId, setActiveFolderId] = useState(null);
     const [menuOpen, setMenuOpen] = useState(true); // Open menu by default
     const [viewMode, setViewMode] = useState('2d'); 
     const [showGuides, setShowGuides] = useState(false); 
@@ -1847,6 +1994,11 @@ export default function App() {
 
     useEffect(() => {
         localStorage.setItem('emap_low_resource_mode', lowResourceMode);
+        if (lowResourceMode) {
+            document.body.classList.add('low-resource-mode');
+        } else {
+            document.body.classList.remove('low-resource-mode');
+        }
     }, [lowResourceMode]);
 
     // USB Polling
@@ -2194,7 +2346,7 @@ export default function App() {
     };
 
     const updatePoint = (wallId, idx, cx, cy) => { setWalls(p => p.map(w => { if(w.id !== wallId) return w; const pts = [...w.points]; if(moveMode) { const dx = cx - pts[idx].x; const dy = cy - pts[idx].y; return {...w, points: pts.map(pt => ({x: pt.x + dx, y: pt.y + dy}))}; } pts[idx] = {x:cx, y:cy}; return {...w, points: pts}; })); };
-    const addFolder = () => setFolders(p => [...p, {id: Date.now(), name: "Group", isOpen: true}]);
+    const addFolder = () => setFolders(p => [...p, {id: Date.now(), name: "Group", isOpen: true, color: "#6b7280"}]);
     const deleteWall = (id, name) => {
         showConfirm("Delete Wall", `Are you sure you want to delete the wall "${name}"?`, () => {
             if (activeWallId === id) setActiveWallId(null);
@@ -2211,9 +2363,118 @@ export default function App() {
             })));
         });
     };
-    const moveWall = (id, dir) => { setWalls(p => { const idx = p.findIndex(w => w.id === id); if(idx === -1 || idx+dir < 0 || idx+dir >= p.length) return p; const res = [...p]; [res[idx], res[idx+dir]] = [res[idx+dir], res[idx]]; return res; }); };
+    const moveWall = (id, dir) => {
+        setWalls(p => {
+            const idx = p.findIndex(w => w.id === id);
+            if (idx === -1) return p;
+            const wall = p[idx];
+            
+            // If in a group, only move within that group's boundaries
+            if (wall.folderId !== null) {
+                const folderWalls = p.filter(w => w.folderId === wall.folderId);
+                const firstIdx = p.findIndex(w => w.folderId === wall.folderId);
+                const lastIdx = firstIdx + folderWalls.length - 1;
+                
+                if (idx + dir < firstIdx || idx + dir > lastIdx) return p;
+                
+                const res = [...p];
+                [res[idx], res[idx + dir]] = [res[idx + dir], res[idx]];
+                return res;
+            } else {
+                // Not in a group, move normally but jump over groups
+                let targetIdx = idx + dir;
+                if (targetIdx < 0 || targetIdx >= p.length) return p;
+                
+                const res = [...p];
+                const targetWall = res[targetIdx];
+                
+                if (targetWall.folderId !== null) {
+                    // Jump over the entire group
+                    const folderId = targetWall.folderId;
+                    const folderWallIndices = [];
+                    res.forEach((w, i) => { if(w.folderId === folderId) folderWallIndices.push(i); });
+                    
+                    if (dir === -1) {
+                        // Moving up, jump to before the first element of group
+                        const moveBlockStart = folderWallIndices[0];
+                        const wallToMove = res[idx];
+                        res.splice(idx, 1);
+                        res.splice(moveBlockStart, 0, wallToMove);
+                    } else {
+                        // Moving down, jump to after the last element of group
+                        const moveBlockEnd = folderWallIndices[folderWallIndices.length - 1];
+                        const wallToMove = res[idx];
+                        res.splice(idx, 1);
+                        res.splice(moveBlockEnd, 0, wallToMove);
+                    }
+                } else {
+                    [res[idx], res[idx + dir]] = [res[idx + dir], res[idx]];
+                }
+                return res;
+            }
+        });
+    };
+    
+    const moveFolder = (id, dir) => {
+        setFolders(prev => {
+            const idx = prev.findIndex(f => f.id === id);
+            if (idx === -1 || idx + dir < 0 || idx + dir >= prev.length) return prev;
+            const res = [...prev];
+            [res[idx], res[idx + dir]] = [res[idx + dir], res[idx]];
+            return res;
+        });
+        setWalls(p => {
+            let res = [...p];
+            const folderWallIndices = [];
+            res.forEach((w, i) => { if(w.folderId === id) folderWallIndices.push(i); });
+            if(folderWallIndices.length === 0) return p;
+            
+            const firstIdx = folderWallIndices[0];
+            const lastIdx = folderWallIndices[folderWallIndices.length - 1];
+            
+            if(dir === -1) {
+                // Move up (towards 0)
+                if(firstIdx > 0) {
+                    const aboveIdx = firstIdx - 1;
+                    const aboveWall = res[aboveIdx];
+                    if (aboveWall.folderId !== null) {
+                        // Jump over group above
+                        const aboveFolderId = aboveWall.folderId;
+                        const aboveFolderIndices = [];
+                        res.forEach((w, i) => { if(w.folderId === aboveFolderId) aboveFolderIndices.push(i); });
+                        const block = res.splice(firstIdx, folderWallIndices.length);
+                        res.splice(aboveFolderIndices[0], 0, ...block);
+                    } else {
+                        // Swap with single wall above
+                        const block = res.splice(firstIdx, folderWallIndices.length);
+                        res.splice(aboveIdx, 0, ...block);
+                    }
+                }
+            } else {
+                // Move down
+                if(lastIdx < res.length - 1) {
+                    const belowIdx = lastIdx + 1;
+                    const belowWall = res[belowIdx];
+                    if (belowWall.folderId !== null) {
+                        // Jump over group below
+                        const belowFolderId = belowWall.folderId;
+                        const belowFolderIndices = [];
+                        res.forEach((w, i) => { if(w.folderId === belowFolderId) belowFolderIndices.push(i); });
+                        const block = res.splice(firstIdx, folderWallIndices.length);
+                        res.splice(belowFolderIndices[belowFolderIndices.length - 1] - (block.length - 1), 0, ...block);
+                    } else {
+                        // Swap with single wall below
+                        const block = res.splice(firstIdx, folderWallIndices.length);
+                        res.splice(belowIdx - (block.length - 1), 0, ...block);
+                    }
+                }
+            }
+            return res;
+        });
+    };
 
     const activeWall = walls.find(w => w.id === activeWallId);
+    const activeFolder = folders.find(f => f.id === activeFolderId);
 
     const renderSVG = (isLive) => (
         <svg className="w-full h-full" style={{backgroundColor: (isLive || menuTab === 'scenes') ? 'black' : 'transparent'}}>
@@ -2232,7 +2493,7 @@ export default function App() {
                 const isProjecting = (isLive || menuTab === 'scenes') && currentCueState?.nodes?.some(n => n.type === 'output' && n.data.wallId === wall.id && currentCueState.connections?.some(c => c.to === n.id));
                 
                 return (
-                    <g key={wall.id} onClick={(e) => { if(!isLive) { e.stopPropagation(); setActiveWallId(wall.id); }}}>
+                    <g key={wall.id} onClick={(e) => { if(!isLive) { e.stopPropagation(); setActiveWallId(wall.id); setActiveFolderId(null); }}}>
                         {isProjecting && ( <path d={`M ${wall.points[0].x} ${wall.points[0].y} L ${wall.points[1].x} ${wall.points[1].y} L ${wall.points[2].x} ${wall.points[2].y} L ${wall.points[3].x} ${wall.points[3].y} Z`} fill="transparent" stroke="none" /> )}
                         {!isProjecting && (isLive || menuTab === 'scenes') && ( <path d={`M ${wall.points[0].x} ${wall.points[0].y} L ${wall.points[1].x} ${wall.points[1].y} L ${wall.points[2].x} ${wall.points[2].y} L ${wall.points[3].x} ${wall.points[3].y} Z`} fill={currStyle.fill} fillOpacity={baseOpacity} stroke="none" /> )}
                         {(!isLive && menuTab !== 'scenes') && ( <path d={`M ${wall.points[0].x} ${wall.points[0].y} L ${wall.points[1].x} ${wall.points[1].y} L ${wall.points[2].x} ${wall.points[2].y} L ${wall.points[3].x} ${wall.points[3].y} Z`} fill={currStyle.fill} fillOpacity={baseOpacity} stroke={currStyle.stroke} strokeWidth={wall.id === activeWallId ? 2 : 1} strokeDasharray="5,5" /> )}
@@ -2272,17 +2533,17 @@ export default function App() {
             )}
 
                                 <ProjectManager isOpen={showProjectManager} onClose={() => setShowProjectManager(false)} activeProjectId={activeProjectId} showConfirm={showConfirm} showAlert={showAlert} setIsLoading={setIsLoading} />
-                                <AssetBrowser 
-                                    isOpen={assetBrowserState.isOpen} 
-                                    onClose={() => setAssetBrowserState({isOpen:false})} 
-                                    onSelect={(a) => {assetBrowserState.callback(a); setAssetBrowserState({isOpen:false})}} 
-                                    initialTab={assetBrowserState.type} 
-                                    showConfirm={showConfirm} 
-                                    showAlert={showAlert} 
+                                <AssetBrowser
+                                    isOpen={assetBrowserState.isOpen}
+                                    onClose={() => setAssetBrowserState({isOpen:false})}
+                                    onSelect={(a) => {assetBrowserState.callback(a); setAssetBrowserState({isOpen:false})}}
+                                    initialTab={assetBrowserState.type}
+                                    showConfirm={showConfirm}
+                                    showAlert={showAlert}
                                     hiddenDrives={hiddenDrives}
                                     setHiddenDrives={setHiddenDrives}
-                                />
-            <div className={`absolute inset-0 h-full z-0 ${!activeProjectId ? 'hidden' : ''}`}>
+                                    lowResourceMode={lowResourceMode}
+                                />            <div className={`absolute inset-0 h-full z-0 ${!activeProjectId ? 'hidden' : ''}`}>
                 <div className="absolute inset-0 z-10" onClick={() => setActiveWallId(null)}>
                     <WallBackgroundLayer walls={walls} currentCueState={currentCueState} isLive={viewMode === 'live'} isTransitioning={transitionMix < 1} shouldShow={menuTab === 'scenes'} />
                     {(viewMode === 'live' || menuTab === 'scenes') && <TransitioningProjectedContent prevCueState={prevCueState} currentCueState={currentCueState} mix={transitionMix} walls={walls} isLive={viewMode === 'live'} />}
@@ -2410,13 +2671,52 @@ export default function App() {
                                         <div className="grid grid-cols-2 gap-2 mt-1">
                                             <div>
                                                 <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-tighter flex items-center gap-1 mb-1">Group</label>
-                                                <CustomSelect value={activeWall.folderId || ""} onChange={(val) => setWalls(p => p.map(w => w.id === activeWall.id ? { ...w, folderId: val ? parseInt(val) : null } : w))} buttonClassName="bg-zinc-900 border-zinc-800 px-2 py-1 text-xs rounded-lg" options={[{ value: "", label: "None" }, ...folders.map(f => ({ value: f.id, label: f.name }))]} />
+                                                <CustomSelect 
+                                                    value={activeWall.folderId || ""} 
+                                                    onChange={(val) => {
+                                                        const targetFolderId = val ? parseInt(val) : null;
+                                                        setWalls(p => {
+                                                            let res = p.filter(w => w.id !== activeWall.id);
+                                                            const updatedWall = { ...activeWall, folderId: targetFolderId };
+                                                            if (targetFolderId === null) {
+                                                                res.push(updatedWall);
+                                                            } else {
+                                                                const firstIdx = res.findIndex(w => w.folderId === targetFolderId);
+                                                                if (firstIdx !== -1) {
+                                                                    res.splice(firstIdx, 0, updatedWall);
+                                                                } else {
+                                                                    res.push(updatedWall);
+                                                                }
+                                                            }
+                                                            return res;
+                                                        });
+                                                    }} 
+                                                    buttonClassName="bg-zinc-900 border-zinc-800 px-2 py-1 text-xs rounded-lg" 
+                                                    options={[{ value: "", label: "None" }, ...folders.map(f => ({ value: f.id, label: f.name }))]} 
+                                                />
                                             </div>
                                             <div>
                                                 <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-tighter flex items-center gap-1 mb-1">Color</label>
                                                 <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-0.5 h-7">
                                                     <ColorPicker value={activeWall.color} onChange={(val) => setWalls(p => p.map(w => w.id === activeWall.id ? { ...w, color: val } : w))} className="w-4 h-4" />
                                                     <span className="text-[10px] text-zinc-500 font-mono">{activeWall.color}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                                {activeFolder && (
+                                    <div className="space-y-3 bg-zinc-950/50 border border-zinc-800 p-3 rounded-xl shadow-inner">
+                                        <div className="flex items-center gap-2 mb-2 pb-2 border-b border-zinc-800/50">
+                                            <div className="w-3 h-3 rounded-full shadow-lg" style={{ backgroundColor: activeFolder.color || '#6b7280' }}></div>
+                                            <input type="text" value={activeFolder.name} onChange={(e) => setFolders(p => p.map(f => f.id === activeFolder.id ? { ...f, name: e.target.value } : f))} className="bg-transparent border-none outline-none text-sm font-bold text-white w-full" />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2 mt-1">
+                                            <div>
+                                                <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-tighter flex items-center gap-1 mb-1">Color</label>
+                                                <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-0.5 h-7">
+                                                    <ColorPicker value={activeFolder.color || '#6b7280'} onChange={(val) => setFolders(p => p.map(f => f.id === activeFolder.id ? { ...f, color: val } : f))} className="w-4 h-4" />
+                                                    <span className="text-[10px] text-zinc-500 font-mono">{activeFolder.color || '#6b7280'}</span>
                                                 </div>
                                             </div>
                                         </div>
@@ -2431,13 +2731,39 @@ export default function App() {
                                         </div>
                                     </div>
                                     <div className="bg-zinc-950/30 rounded-xl p-1 border border-zinc-800/50">
-                                        {folders.map(folder => (<FolderItem key={folder.id} folder={folder} walls={walls} activeWallId={activeWallId} setActiveWallId={setActiveWallId} setWalls={setWalls} setFolders={setFolders} moveWall={moveWall} deleteWall={deleteWall} showConfirm={showConfirm} />))}
-                                        {walls.filter(w => w.folderId === null).map(wall => (<WallItem key={wall.id} wall={wall} activeWallId={activeWallId} setActiveWallId={setActiveWallId} moveWall={moveWall} deleteWall={deleteWall} />))}
+                                        {(() => {
+                                            const items = [];
+                                            const processedFolders = new Set();
+                                            walls.forEach(wall => {
+                                                if (wall.folderId === null) {
+                                                    items.push({ type: 'wall', wall });
+                                                } else if (!processedFolders.has(wall.folderId)) {
+                                                    const folder = folders.find(f => f.id === wall.folderId);
+                                                    if (folder) {
+                                                        items.push({ type: 'folder', folder });
+                                                        processedFolders.add(wall.folderId);
+                                                    }
+                                                }
+                                            });
+                                            // Fallback for empty folders (though they won't show in stacking order otherwise)
+                                            folders.forEach(folder => {
+                                                if (!processedFolders.has(folder.id)) {
+                                                    items.push({ type: 'folder', folder });
+                                                }
+                                            });
+                                            
+                                            return items.map(item => (
+                                                item.type === 'folder' ? (
+                                                    <FolderItem key={item.folder.id} folder={item.folder} walls={walls} activeWallId={activeWallId} setActiveWallId={setActiveWallId} activeFolderId={activeFolderId} setActiveFolderId={setActiveFolderId} setWalls={setWalls} setFolders={setFolders} moveWall={moveWall} moveFolder={moveFolder} deleteWall={deleteWall} showConfirm={showConfirm} />
+                                                ) : (
+                                                    <WallItem key={item.wall.id} wall={item.wall} activeWallId={activeWallId} setActiveWallId={setActiveWallId} setActiveFolderId={setActiveFolderId} moveWall={moveWall} deleteWall={deleteWall} />
+                                                )
+                                            ));
+                                        })()}
                                     </div>
                                 </div>
                                 
-                                <WallStackVisualizer walls={walls} activeWallId={activeWallId} />
-
+                                <WallStackVisualizer walls={walls} activeWallId={activeWallId} folders={folders} />
                                 <div className="mt-4 pt-4 border-t border-zinc-800/50">
                                     <button onClick={() => setShowProjectManager(true)} className="w-full bg-zinc-800/50 hover:bg-zinc-800 text-zinc-400 hover:text-white py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 border border-zinc-700 transition-all"><Database size={14}/> Projects</button>
                                 </div>

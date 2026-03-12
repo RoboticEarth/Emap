@@ -146,12 +146,11 @@ const RenderNode = ({ nodeId, nodes, connections, resolution, wallColor, isLive,
         const style = getStyle();
         return (
             <div style={{width: '100%', height: '100%', position: 'relative', backgroundColor: isLive ? 'black' : 'transparent'}}>
-                {node.type === 'image' && node.data.value && <img src={node.data.value} style={style} />}
+                {node.type === 'image' && node.data.value && <img src={node.data.value.split('?')[0]} style={style} />}
                 {node.type === 'video' && node.data.value && (
-                    <video 
-                        key={node.data.value} 
-                        src={node.data.value} 
-                        style={style} 
+                    <video
+                        key={node.data.value}
+                        src={node.data.value.split('?')[0]}                        style={style} 
                         autoPlay 
                         loop 
                         muted={!(node.data.enableAudio ?? false)} 
