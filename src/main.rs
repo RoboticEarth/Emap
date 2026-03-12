@@ -544,7 +544,7 @@ async fn get_fs_preview(req: HttpRequest, query: web::Query<PreviewQuery>) -> im
     let assets_dir = run_dir.join("assets");
     
     // Check if it's a server asset (in the assets folder)
-    let is_server_asset = path.starts_with(&assets_dir);
+    let _is_server_asset = path.starts_with(&assets_dir);
     
     let p1080 = assets_dir.join(".previews").join(format!("{}_1080p.{}", base_name, ext));
     let p720 = assets_dir.join(".previews").join(format!("{}_720p.{}", base_name, ext));
@@ -941,6 +941,9 @@ fn main() {
             println!("  {}: {}x{} at ({},{}) primary={}", i, m.width, m.height, m.x, m.y, m.is_primary);
         }
     }
+
+    // Initialize QtWebEngine before creating the engine
+    qmetaobject::webengine::initialize();
 
     let mut engine = QmlEngine::new();
 
