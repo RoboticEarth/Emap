@@ -19,6 +19,101 @@ const {
 
 // --- SHARED UI COMPONENTS ---
 
+const RotationControl = ({ value, onChange }) => {
+    const [isDragging, setIsDragging] = useState(false);
+    const circleRef = useRef(null);
+
+    const handleMouseMove = useCallback((e) => {
+        if (!isDragging || !circleRef.current) return;
+        const rect = circleRef.current.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const angle = Math.atan2(e.clientY - cy, e.clientX - cx) * (180 / Math.PI);
+        onChange(Math.round(angle));
+    }, [isDragging, onChange]);
+
+    const handleMouseUp = useCallback(() => setIsDragging(false), []);
+
+    useEffect(() => {
+        if (isDragging) {
+            window.addEventListener('mousemove', handleMouseMove);
+            window.addEventListener('mouseup', handleMouseUp);
+        }
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [isDragging, handleMouseMove, handleMouseUp]);
+
+    return (
+        <div className="pt-2 border-t border-zinc-700/50">
+            <div className="flex justify-between items-center mb-2">
+                <label className="text-xs text-gray-400 font-bold flex items-center gap-2">
+                    <Rotate3D size={12} className="text-blue-400" /> Rotation
+                </label>
+                <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-700 rounded px-2 py-0.5">
+                    <input 
+                        type="number" 
+                        value={value} 
+                        onChange={(e) => onChange(parseInt(e.target.value) || 0)}
+                        className="bg-transparent border-none outline-none text-xs font-bold text-blue-400 w-10 p-0 text-right"
+                    />
+                    <span className="text-[10px] text-zinc-600 font-bold">°</span>
+                </div>
+            </div>
+            
+            <div className="flex items-center gap-4 bg-zinc-950/50 p-3 rounded-xl border border-zinc-800/50 shadow-inner">
+                <div 
+                    ref={circleRef}
+                    className="relative w-16 h-16 rounded-full border-2 border-zinc-700 bg-zinc-900 cursor-pointer flex items-center justify-center group shadow-lg"
+                    onMouseDown={(e) => { e.stopPropagation(); setIsDragging(true); }}
+                >
+                    {/* Clock marks */}
+                    {[0, 90, 180, 270].map(deg => (
+                        <div key={deg} className="absolute w-0.5 h-1.5 bg-zinc-700" style={{ transform: `rotate(${deg}deg) translateY(-26px)` }} />
+                    ))}
+                    
+                    {/* Rotating hand */}
+                    <div 
+                        className="absolute w-1 h-7 bg-blue-500 origin-bottom rounded-full"
+                        style={{ transform: `rotate(${value + 90}deg) translateY(-14px)`, boxShadow: '0 0 10px rgba(59, 130, 246, 0.6)' }}
+                    />
+                    
+                    {/* Center dot */}
+                    <div className="w-2 h-2 rounded-full bg-zinc-600 z-10 border border-zinc-800" />
+                    
+                    {/* Grab handle */}
+                    <div 
+                        className="absolute w-4 h-4 rounded-full bg-white border-2 border-blue-500 shadow-xl transform -translate-x-1/2 -translate-y-1/2 z-20 transition-transform group-active:scale-110"
+                        style={{ 
+                            left: `${50 + 40 * Math.cos((value) * Math.PI / 180)}%`,
+                            top: `${50 + 40 * Math.sin((value) * Math.PI / 180)}%`
+                        }}
+                    />
+                </div>
+                
+                <div className="flex-1 grid grid-cols-2 gap-2">
+                    {[0, 90, 180, 270].map(deg => (
+                        <button 
+                            key={deg}
+                            onClick={() => onChange(deg)}
+                            className={`py-1 rounded text-[10px] font-bold border transition-all ${value === deg ? 'bg-blue-600 border-blue-400 text-white' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-zinc-700'}`}
+                        >
+                            {deg}°
+                        </button>
+                    ))}
+                    <button 
+                        onClick={() => onChange(0)}
+                        className="col-span-2 py-1.5 mt-1 rounded text-[10px] font-bold bg-zinc-800 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-700 flex items-center justify-center gap-1 transition-all"
+                    >
+                        <Rotate3D size={12} /> RESET
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const ConflictModal = ({ isOpen, fileName, onKeepOld, onKeepNew, applyToAll, setApplyToAll }) => {
     if (!isOpen) return null;
     return createPortal(
@@ -216,11 +311,17 @@ const GroupTransformHandle = ({ x, y, onDrag }) => {
     );
 };
 
-const PointHandle = ({ x, y, index, color, isSelected, onDrag, isMoveMode, isScaleMode, type = 'corner' }) => {
+const PointHandle = ({ x, y, index, color, isSelected, onDrag, isMoveMode, isScaleMode, viewportZoom = 1, type = 'corner' }) => {
     const [isDragging, setIsDragging] = useState(false);
     useEffect(() => {
         if (isDragging) {
-            const handleMouseMove = (e) => onDrag(index, e.clientX, e.clientY);
+            const handleMouseMove = (e) => {
+                // Get mouse position relative to SVG/viewport container
+                const svg = document.querySelector('svg.w-full.h-full');
+                if (!svg) return;
+                const rect = svg.getBoundingClientRect();
+                onDrag(index, e.clientX - rect.left, e.clientY - rect.top);
+            };
             const handleMouseUp = () => setIsDragging(false);
             window.addEventListener('mousemove', handleMouseMove);
             window.addEventListener('mouseup', handleMouseUp);
@@ -229,13 +330,14 @@ const PointHandle = ({ x, y, index, color, isSelected, onDrag, isMoveMode, isSca
                 window.removeEventListener('mouseup', handleMouseUp);
             };
         }
-    }, [isDragging]);
+    }, [isDragging, index, onDrag]);
     
     const handleColor = isMoveMode ? "#fb923c" : (isScaleMode ? "#22d3ee" : color);
     const isCorner = type === 'corner';
+    const scale = 1 / viewportZoom;
     
     return (
-        <g transform={`translate(${x}, ${y})`} style={{ cursor: (isMoveMode || isScaleMode) ? 'move' : (isSelected ? 'move' : 'default') }} onMouseDown={(e) => { if(isSelected) { e.stopPropagation(); setIsDragging(true); } }} onClick={(e) => e.stopPropagation()}>
+        <g transform={`translate(${x}, ${y}) scale(${scale})`} style={{ cursor: (isMoveMode || isScaleMode) ? 'move' : (isSelected ? 'move' : 'default') }} onMouseDown={(e) => { if(isSelected) { e.stopPropagation(); setIsDragging(true); } }} onClick={(e) => e.stopPropagation()}>
             <circle r="25" fill="transparent" />
             {isCorner ? (
                 <>
@@ -1387,9 +1489,11 @@ const CustomSelect = ({ value, onChange, options, className = "", buttonClassNam
 };
 // --- RENDER ENGINE ---
 
-const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height }) => {
+const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection }) => {
     const canvasRef = useRef(null);
     const [img, setImg] = useState(null);
+    const timeRef = useRef(0);
+    const lastTimeRef = useRef(0);
 
     useEffect(() => {
         const i = new Image();
@@ -1397,32 +1501,72 @@ const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height 
         i.onload = () => setImg(i);
     }, [src]);
 
-    useEffect(() => {
+    const render = useCallback((time) => {
         if (!img || !canvasRef.current) return;
+        
+        const delta = time - (lastTimeRef.current || time);
+        lastTimeRef.current = time;
+        
+        if (isAnimatingPos) {
+            timeRef.current += delta * 0.001;
+        }
+
         const canvas = canvasRef.current;
         const ctx = canvas.getContext('2d');
         const w = width || 1024;
         const h = height || 1024;
 
         ctx.clearRect(0, 0, w, h);
-        
-        // Create pattern
         const pattern = ctx.createPattern(img, 'repeat');
-        
-        // Center of the wall for rotation/scale
-        const cx = w * (alignX / 100);
-        const cy = h * (alignY / 100);
+
+        // Normalize scale: scale=1 should mean the image fills the container (matching 'cover' behavior)
+        const baseScale = Math.max(w / img.width, h / img.height);
+        const finalScale = baseScale * scale;
+
+        let offsetX = alignX;
+        let offsetY = alignY;
+
+        if (isAnimatingPos) {
+            const sx = animSpeedX ?? 0.1;
+            const sy = animSpeedY ?? 0.1;
+            
+            if (posAnimDirection === 'loop') {
+                offsetX = (alignX + timeRef.current * sx * 100) % 100;
+                offsetY = (alignY + timeRef.current * sy * 100) % 100;
+            } else {
+                // Ping-pong
+                offsetX = alignX + Math.sin(timeRef.current * sx * 5) * 50;
+                offsetY = alignY + Math.cos(timeRef.current * sy * 5) * 50;
+            }
+        }
+
+        const cx = w * (offsetX / 100);
+        const cy = h * (offsetY / 100);
         
         const matrix = new DOMMatrix();
         matrix.translateSelf(cx, cy);
         matrix.rotateSelf(rotate);
-        matrix.scaleSelf(scale, scale);
+        matrix.scaleSelf(finalScale, finalScale);
         matrix.translateSelf(-img.width / 2, -img.height / 2);
         pattern.setTransform(matrix);
         
         ctx.fillStyle = pattern;
         ctx.fillRect(0, 0, w, h);
-    }, [img, scale, rotate, alignX, alignY, width, height]);
+
+        if (isAnimatingPos) {
+            requestAnimationFrame(render);
+        }
+    }, [img, scale, rotate, alignX, alignY, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection]);
+
+    useEffect(() => {
+        if (!isAnimatingPos) {
+            render(0);
+        } else {
+            lastTimeRef.current = performance.now();
+            const animId = requestAnimationFrame(render);
+            return () => cancelAnimationFrame(animId);
+        }
+    }, [isAnimatingPos, render]);
 
     return <canvas ref={canvasRef} width={width || 1024} height={height || 1024} style={{ width: '100%', height: '100%', backgroundColor: isLive ? 'black' : 'transparent' }} />;
 };
@@ -1463,7 +1607,7 @@ const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLi
         if (isTiling && node.type === 'image' && node.data.value) {
             return (
                 <TiledImage 
-                    src={node.data.value} 
+                    src={node.data.value.split('?')[0]} 
                     scale={node.data.scale || 1} 
                     rotate={node.data.rotate || 0}
                     alignX={node.data.alignX ?? 50}
@@ -1471,17 +1615,21 @@ const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLi
                     isLive={isLive}
                     width={width}
                     height={height}
+                    isAnimatingPos={node.data.isAnimatingPos}
+                    animSpeedX={node.data.animSpeedX}
+                    animSpeedY={node.data.animSpeedY}
+                    posAnimDirection={node.data.posAnimDirection}
                 />
             );
         }
 
         return (
             <div style={{width: '100%', height: '100%', position: 'relative', backgroundColor: isLive ? 'black' : 'transparent'}}>
-                {node.type === 'image' && node.data.value && <img src={node.data.value} style={style} />}
+                {node.type === 'image' && node.data.value && <img src={node.data.value.split('?')[0]} style={style} />}
                 {node.type === 'video' && node.data.value && (
                     <video 
                         key={node.data.value} 
-                        src={node.data.value} 
+                        src={node.data.value.split('?')[0]} 
                         style={{...style, objectFit: isTiling ? 'none' : (node.data.fit || 'cover')}} 
                         autoPlay 
                         loop 
@@ -1549,7 +1697,7 @@ const getInterpolatedNode = (prevNode, currNode, mix) => {
     return { ...currNode, data: newData };
 };
 
-const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, walls, isLive }) => {
+const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, walls, isLive, viewportPan, viewportZoom }) => {
     const getRootNodeId = (state, wallId) => {
         if (!state || !state.nodes) return null;
         const out = state.nodes.find(n => n.type === 'output' && n.data.wallId === wallId);
@@ -1562,7 +1710,8 @@ const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, wal
 
     return (
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
-            {walls.filter(w => !w.hidden).map(wall => {
+            <div style={{ transform: `translate(${viewportPan.x}px, ${viewportPan.y}px) scale(${viewportZoom})`, transformOrigin: '0 0', width: '100%', height: '100%' }}>
+                {walls.filter(w => !w.hidden).map(wall => {
                 const prevRootId = getRootNodeId(prevCueState, wall.id);
                 const currRootId = getRootNodeId(currentCueState, wall.id);
                 
@@ -1613,16 +1762,18 @@ const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, wal
                     </div>
                 );
             })}
+            </div>
         </div>
     );
 };
 
-const WallBackgroundLayer = ({ walls, currentCueState, isLive, isTransitioning, shouldShow }) => {
+const WallBackgroundLayer = ({ walls, currentCueState, isLive, isTransitioning, shouldShow, viewportPan, viewportZoom }) => {
     if (isLive || isTransitioning || !shouldShow) return null;
 
     return (
         <svg className="absolute inset-0 w-full h-full pointer-events-none z-0" style={{backgroundColor: 'transparent'}}>
-            {walls.filter(w => !w.hidden).map(wall => {
+            <g style={{ transform: `translate(${viewportPan.x}px, ${viewportPan.y}px) scale(${viewportZoom})`, transformOrigin: '0 0' }}>
+                {walls.filter(w => !w.hidden).map(wall => {
                 const hasContent = currentCueState?.nodes?.some(n => 
                     n.type === 'output' && 
                     n.data.wallId === wall.id && 
@@ -1637,10 +1788,10 @@ const WallBackgroundLayer = ({ walls, currentCueState, isLive, isTransitioning, 
                     </g>
                 );
             })}
-        </svg>
-    );
-};
-
+            </g>
+            </svg>
+            );
+            };
 // --- NODE EDITOR ---
 
 const Node = ({ id, type, x, y, label, selected, onDragStart, onHandleClick, data, updateData, isConnecting, activeConnectionId, onDelete, onOpenAssetBrowser }) => {
@@ -1762,22 +1913,88 @@ const Node = ({ id, type, x, y, label, selected, onDragStart, onHandleClick, dat
                                     { value: "fill", label: "Stretch" }
                                 ]} />
                             </div>
-                            <div>
-                                <label className="text-[10px] text-gray-500 font-bold block mb-1">Scale: {data?.scale || 1}</label>
-                                <input type="range" min="0.1" max="5" step="0.01" value={data?.scale ?? 1} onChange={(e) => updateData(id, { scale: parseFloat(e.target.value) })} className="w-full h-2 bg-zinc-600 rounded appearance-none cursor-pointer" />
+                            <div 
+                                className="group relative"
+                                onWheel={(e) => {
+                                    e.stopPropagation();
+                                    const delta = -e.deltaY * 0.001;
+                                    const currentScale = data?.scale ?? 1;
+                                    const newScale = Math.max(0.01, currentScale + delta);
+                                    updateData(id, { scale: parseFloat(newScale.toFixed(3)) });
+                                }}
+                            >
+                                <div className="flex justify-between items-center mb-1">
+                                    <label className="text-[10px] text-gray-500 font-bold block">Scale: {data?.scale || 1}</label>
+                                    <button 
+                                        onClick={() => updateData(id, { scale: 1 })}
+                                        className="text-[8px] px-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                                    >
+                                        RESET
+                                    </button>
+                                </div>
+                                <div className="relative flex items-center h-5 bg-zinc-900/50 rounded border border-zinc-700/50 px-2 group-hover:border-blue-500/50 transition-colors cursor-ns-resize">
+                                    <Ruler size={10} className="text-zinc-600 mr-2" />
+                                    <span className="text-[10px] font-mono text-blue-400">{(data?.scale || 1).toFixed(2)}x</span>
+                                    <div className="absolute right-2 text-[8px] text-zinc-600 font-bold uppercase tracking-tighter">Scroll</div>
+                                </div>
                             </div>
                         </div>
-                        <div>
-                            <label className="text-[10px] text-gray-500 font-bold block mb-1">Rotation: {data?.rotate || 0}°</label>
-                            <input type="range" min="-180" max="180" step="1" value={data?.rotate ?? 0} onChange={(e) => updateData(id, { rotate: parseInt(e.target.value) })} className="w-full h-2 bg-zinc-600 rounded appearance-none cursor-pointer" />
-                        </div>
+
+                        <RotationControl 
+                            value={data?.rotate ?? 0} 
+                            onChange={(val) => updateData(id, { rotate: val })} 
+                        />
+
                         {data?.fit !== 'fill' && (
-                            <div>
-                                <label className="text-[10px] text-gray-500 font-bold block mb-1">Position ({data?.alignX ?? 50}%, {data?.alignY ?? 50}%)</label>
-                                <div className="flex gap-2">
-                                    <input type="range" min="0" max="100" value={data?.alignX ?? 50} onChange={(e) => updateData(id, { alignX: parseInt(e.target.value) })} className="w-full h-2 bg-zinc-600 rounded appearance-none cursor-pointer" title="Horizontal Position" />
-                                    <input type="range" min="0" max="100" value={data?.alignY ?? 50} onChange={(e) => updateData(id, { alignY: parseInt(e.target.value) })} className="w-full h-2 bg-zinc-600 rounded appearance-none cursor-pointer" title="Vertical Position" />
+                            <div className="space-y-2">
+                                <div className="flex justify-between items-center">
+                                    <label className="text-[10px] text-gray-500 font-bold block">Position ({data?.alignX ?? 50}%, {data?.alignY ?? 50}%)</label>
+                                    <button 
+                                        onClick={() => updateData(id, { 
+                                            isAnimatingPos: !(data?.isAnimatingPos ?? false),
+                                            animSpeedX: data?.animSpeedX ?? 0.1,
+                                            animSpeedY: data?.animSpeedY ?? 0.1,
+                                            posAnimDirection: data?.posAnimDirection ?? 'ping-pong'
+                                        })}
+                                        className={`text-[8px] px-1.5 py-0.5 rounded font-bold transition-all ${data?.isAnimatingPos ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700'}`}
+                                    >
+                                        {data?.isAnimatingPos ? 'STOP' : 'ANIMATE'}
+                                    </button>
                                 </div>
+                                
+                                {data?.isAnimatingPos ? (
+                                    <div className="bg-zinc-900/50 p-2 rounded border border-zinc-800 space-y-2 animate-in fade-in zoom-in duration-200">
+                                        <div className="flex items-center justify-between">
+                                            <label className="text-[9px] text-zinc-500 font-bold uppercase">Direction</label>
+                                            <div className="flex bg-zinc-950 p-0.5 rounded border border-zinc-800">
+                                                {['ping-pong', 'loop'].map(mode => (
+                                                    <button 
+                                                        key={mode}
+                                                        onClick={() => updateData(id, { posAnimDirection: mode })}
+                                                        className={`text-[8px] px-2 py-0.5 rounded uppercase font-bold transition-colors ${data?.posAnimDirection === mode ? 'bg-zinc-700 text-white' : 'text-zinc-600 hover:text-zinc-400'}`}
+                                                    >
+                                                        {mode}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <div className="flex justify-between text-[8px] font-bold text-zinc-600">
+                                                <span>SPEED X: {(data?.animSpeedX ?? 0.1).toFixed(2)}</span>
+                                                <span>SPEED Y: {(data?.animSpeedY ?? 0.1).toFixed(2)}</span>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <input type="range" min="0" max="1" step="0.01" value={data?.animSpeedX ?? 0.1} onChange={(e) => updateData(id, { animSpeedX: parseFloat(e.target.value) })} className="w-full h-1.5 bg-zinc-800 rounded appearance-none cursor-pointer accent-blue-500" />
+                                                <input type="range" min="0" max="1" step="0.01" value={data?.animSpeedY ?? 0.1} onChange={(e) => updateData(id, { animSpeedY: parseFloat(e.target.value) })} className="w-full h-1.5 bg-zinc-800 rounded appearance-none cursor-pointer accent-blue-500" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="flex gap-2">
+                                        <input type="range" min="0" max="100" value={data?.alignX ?? 50} onChange={(e) => updateData(id, { alignX: parseInt(e.target.value) })} className="w-full h-2 bg-zinc-600 rounded appearance-none cursor-pointer" title="Horizontal Position" />
+                                        <input type="range" min="0" max="100" value={data?.alignY ?? 50} onChange={(e) => updateData(id, { alignY: parseInt(e.target.value) })} className="w-full h-2 bg-zinc-600 rounded appearance-none cursor-pointer" title="Vertical Position" />
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
@@ -1849,6 +2066,22 @@ const NodeEditor = ({ activeSelection, currentCue, updateCueData, walls, setWall
     const [connections, setConnections] = useState([]);
     const [pan, setPan] = useState({ x: 0, y: 0 });
     const [zoom, setZoom] = useState(1);
+    const containerRef = useRef(null);
+    const [editorSize, setEditorSize] = useState({ width: 1000, height: 1000 });
+
+    useEffect(() => {
+        if (!containerRef.current) return;
+        const observer = new ResizeObserver((entries) => {
+            for (let entry of entries) {
+                setEditorSize({
+                    width: entry.contentRect.width,
+                    height: entry.contentRect.height
+                });
+            }
+        });
+        observer.observe(containerRef.current);
+        return () => observer.disconnect();
+    }, []);
     const [draggingId, setDraggingId] = useState(null);
     const dragOffset = useRef({ x: 0, y: 0 });
     const [connectSource, setConnectSource] = useState(null); 
@@ -1925,10 +2158,26 @@ const NodeEditor = ({ activeSelection, currentCue, updateCueData, walls, setWall
     const handleBgClick = () => { setConnectSource(null); setContextMenu(null); };
     
     const handleWheel = (e) => {
-        if (e.ctrlKey) {
-            setZoom(z => Math.min(Math.max(z - e.deltaY * 0.001, 0.5), 2));
-        } else {
-            setPan(p => ({ x: p.x - e.deltaX, y: p.y - e.deltaY }));
+        e.preventDefault();
+        const zoomSpeed = 0.001;
+        const delta = -e.deltaY * zoomSpeed;
+        const newZoom = Math.min(Math.max(zoom + delta, 0.1), 5);
+
+        if (newZoom !== zoom) {
+            const rect = containerRef.current.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            // Current world position under cursor
+            const worldX = (mouseX - pan.x) / zoom;
+            const worldY = (mouseY - pan.y) / zoom;
+
+            // New pan to keep the same world position under cursor
+            const newPanX = mouseX - worldX * newZoom;
+            const newPanY = mouseY - worldY * newZoom;
+
+            setZoom(newZoom);
+            setPan({ x: newPanX, y: newPanY });
         }
     };
 
@@ -1977,7 +2226,7 @@ const NodeEditor = ({ activeSelection, currentCue, updateCueData, walls, setWall
     };
 
     return (
-        <div className="h-full bg-transparent relative overflow-hidden select-none" onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} onWheel={handleWheel} onContextMenu={handleContextMenu} onClick={handleBgClick}>
+        <div ref={containerRef} className="h-full bg-transparent relative overflow-hidden select-none" onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} onWheel={handleWheel} onContextMenu={handleContextMenu} onClick={handleBgClick}>
             <div className="absolute inset-0 node-grid opacity-30" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: '0 0' }}></div>
             <div className="absolute top-2 left-2 z-10 flex gap-2 pointer-events-none">
                 <div className="bg-zinc-800/80 backdrop-blur border border-zinc-700 rounded p-2 flex items-center gap-2 shadow-lg pointer-events-auto">
@@ -2047,8 +2296,8 @@ const NodeEditor = ({ activeSelection, currentCue, updateCueData, walls, setWall
             {nodes.some(n => {
                 const viewportLeft = -pan.x / zoom;
                 const viewportTop = -pan.y / zoom;
-                const viewportRight = viewportLeft + window.innerWidth / zoom;
-                const viewportBottom = viewportTop + window.innerHeight / zoom;
+                const viewportRight = viewportLeft + editorSize.width / zoom;
+                const viewportBottom = viewportTop + editorSize.height / zoom;
                 return n.x > viewportRight || n.x + 250 < viewportLeft || n.y > viewportBottom || n.y + 150 < viewportTop;
             }) && (
                 <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-blue-600/20 text-blue-400 border border-blue-500/50 px-4 py-1 rounded-full text-[10px] font-bold tracking-widest flex items-center gap-2 animate-bounce-subtle pointer-events-none z-50">
@@ -2058,18 +2307,48 @@ const NodeEditor = ({ activeSelection, currentCue, updateCueData, walls, setWall
             )}
             
             <div className="absolute bottom-4 right-4 bg-zinc-950/80 backdrop-blur border border-zinc-800 rounded-xl shadow-2xl pointer-events-none z-50 overflow-hidden" style={{ width: 160, height: 120 }}>
-                <svg width="100%" height="100%" viewBox="-1000 -1000 4000 4000">
-                    <rect x={-pan.x / zoom} y={-pan.y / zoom} width={window.innerWidth / zoom} height={window.innerHeight / zoom} fill="none" stroke="#3b82f6" strokeWidth="40" strokeDasharray="100,50" />
-                    {nodes.map(n => (
-                        <rect key={`mini-${n.id}`} x={n.x} y={n.y} width="256" height="150" fill={n.type === 'output' ? '#a855f7' : '#6b7280'} rx="40" />
-                    ))}
-                    {connections.map((conn, i) => {
-                        const fromNode = nodes.find(n => n.id === conn.from);
-                        const toNode = nodes.find(n => n.id === conn.to);
-                        if(!fromNode || !toNode) return null;
-                        return <line key={`mini-conn-${i}`} x1={fromNode.x + 256} y1={fromNode.y + 75} x2={toNode.x} y2={toNode.y + 75} stroke="#555" strokeWidth="20" />;
-                    })}
-                </svg>
+                {(() => {
+                    const minX = Math.min(-pan.x / zoom, ...nodes.map(n => n.x), 0);
+                    const minY = Math.min(-pan.y / zoom, ...nodes.map(n => n.y), 0);
+                    const maxX = Math.max((-pan.x + editorSize.width) / zoom, ...nodes.map(n => n.x + 256), 1000);
+                    const maxY = Math.max((-pan.y + editorSize.height) / zoom, ...nodes.map(n => n.y + 150), 1000);
+                    
+                    const boundsW = maxX - minX;
+                    const boundsH = maxY - minY;
+                    const padding = Math.max(boundsW, boundsH) * 0.1;
+
+                    let viewW = boundsW + padding * 2;
+                    let viewH = boundsH + padding * 2;
+                    const aspect = 160 / 120;
+                    
+                    if (viewW / viewH > aspect) {
+                        viewH = viewW / aspect;
+                    } else {
+                        viewW = viewH * aspect;
+                    }
+                    
+                    const centerX = (minX + maxX) / 2;
+                    const centerY = (minY + maxY) / 2;
+                    const vX = centerX - viewW / 2;
+                    const vY = centerY - viewH / 2;
+
+                    return (
+                        <svg width="100%" height="100%" viewBox={`${vX} ${vY} ${viewW} ${viewH}`}>
+                            <rect x={-pan.x / zoom} y={-pan.y / zoom} width={editorSize.width / zoom} height={editorSize.height / zoom} fill="rgba(59, 130, 246, 0.1)" stroke="#3b82f6" strokeWidth={viewW / 100} strokeDasharray={`${viewW / 40},${viewW / 80}`} />
+                            {nodes.map(n => (
+                                <rect key={`mini-${n.id}`} x={n.x} y={n.y} width="256" height="150" fill={n.type === 'output' ? '#a855f7' : '#6b7280'} rx={viewW / 50} />
+                            ))}
+                            {connections.map((conn, i) => {
+                                const fromNode = nodes.find(n => n.id === conn.from);
+                                const toNode = nodes.find(n => n.id === conn.to);
+                                if(!fromNode || !toNode) return null;
+                                const start = getHandleOffset(fromNode, 'output');
+                                const end = getHandleOffset(toNode, conn.toHandle || 'input'); 
+                                return <line key={`mini-conn-${i}`} x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke="#555" strokeWidth={viewW / 150} />;
+                            })}
+                        </svg>
+                    );
+                })()}
             </div>
         </div>
     );
@@ -2417,6 +2696,68 @@ export default function App() {
     const [modal, setModal] = useState({ isOpen: false, title: '', message: '', onConfirm: null, type: 'confirm' });
     const showConfirm = (title, message, onConfirm) => setModal({ isOpen: true, title, message, onConfirm: () => { onConfirm(); setModal(prev => ({ ...prev, isOpen: false })); }, type: 'confirm' });
     const showAlert = (title, message) => setModal({ isOpen: true, title, message, onConfirm: () => setModal(prev => ({ ...prev, isOpen: false })), type: 'alert' });
+
+    const [monitors, setMonitors] = useState([]);
+    const [monitorConfig, setMonitorConfig] = useState(null);
+    const [viewportPan, setViewportPan] = useState({ x: 0, y: 0 });
+    const [viewportZoom, setViewportZoom] = useState(1);
+
+    const projectorMonitor = useMemo(() => {
+        if (monitors.length === 0) return null;
+        if (!monitorConfig || !monitorConfig.dashboard_screen_name) return monitors[0];
+        const proj = monitors.find(m => m.name !== monitorConfig.dashboard_screen_name);
+        return proj || monitors[0];
+    }, [monitors, monitorConfig]);
+
+    const projectorAspectRatio = useMemo(() => {
+        if (!projectorMonitor) return 16/9;
+        return projectorMonitor.width / projectorMonitor.height;
+    }, [projectorMonitor]);
+    const [isPanningViewport, setIsPanningViewport] = useState(false);
+    const viewportRef = useRef(null);
+
+    const handleViewportWheel = (e) => {
+        const zoomSpeed = 0.001;
+        const delta = -e.deltaY * zoomSpeed;
+        const newZoom = Math.min(Math.max(viewportZoom + delta, 0.05), 10);
+
+        if (newZoom !== viewportZoom) {
+            const rect = viewportRef.current.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            const worldX = (mouseX - viewportPan.x) / viewportZoom;
+            const worldY = (mouseY - viewportPan.y) / viewportZoom;
+
+            const newPanX = mouseX - worldX * newZoom;
+            const newPanY = mouseY - worldY * newZoom;
+
+            setViewportZoom(newZoom);
+            setViewportPan({ x: newPanX, y: newPanY });
+        }
+    };
+
+    const handleViewportMouseMove = (e) => {
+        if (e.buttons === 4 || (e.buttons === 1 && e.shiftKey)) {
+            setViewportPan(p => ({ x: p.x + e.movementX, y: p.y + e.movementY }));
+        }
+    };
+
+    useEffect(() => {
+        const loadMonitors = async () => {
+            try {
+                const [mRes, cRes] = await Promise.all([
+                    fetch('/api/monitors'),
+                    fetch('/api/config/monitor')
+                ]);
+                if (mRes.ok) setMonitors(await mRes.json());
+                if (cRes.ok) setMonitorConfig(await cRes.json());
+            } catch (e) {}
+        };
+        loadMonitors();
+        const interval = setInterval(loadMonitors, 2000);
+        return () => clearInterval(interval);
+    }, []);
 
     const [walls, setWalls] = useState([{ id: 1, name: "Main Wall", color: "#84cc16", folderId: null, points: [{ x: 100, y: 100 }, { x: 500, y: 100 }, { x: 500, y: 325 }, { x: 100, y: 325 }] }]);
     const [folders, setFolders] = useState([]);
@@ -2854,7 +3195,7 @@ export default function App() {
             setActiveSelection({ type: 'cue', sceneId: id, cueId: id + 1 });
         }
     };
-    const addCue = (sId) => { 
+    const addCue = (sId) => {
         setScenes(p => p.map(s => {
             if (s.id !== sId) return s;
             const id = Date.now();
@@ -2864,10 +3205,25 @@ export default function App() {
                 setActiveSelection({ type: 'cue', sceneId: sId, cueId: id });
             }
             return updated;
-        })); 
+        }));
     };
 
-    const updatePoint = (wallId, idx, cx, cy) => { setWalls(p => p.map(w => { 
+    const moveCue = (sId, cIdx, direction) => {
+        setScenes(prev => prev.map(s => {
+            if (s.id !== sId) return s;
+            const newCues = [...s.cues];
+            const targetIdx = cIdx + direction;
+            if (targetIdx < 0 || targetIdx >= newCues.length) return s;
+            [newCues[cIdx], newCues[targetIdx]] = [newCues[targetIdx], newCues[cIdx]];
+            return { ...s, cues: newCues };
+        }));
+    };
+    const updatePoint = (wallId, idx, cx, cy) => { 
+        // Convert screen-relative mouse to world-relative
+        const worldX = (cx - viewportPan.x) / viewportZoom;
+        const worldY = (cy - viewportPan.y) / viewportZoom;
+
+        setWalls(p => p.map(w => { 
         if(w.id !== wallId) return w; 
         const pts = [...w.points]; 
         
@@ -2883,41 +3239,41 @@ export default function App() {
             const midY = (pts[p1Idx].y + pts[p2Idx].y) / 2;
             
             // Delta from midpoint to cursor
-            const dx = cx - midX;
-            const dy = cy - midY;
-            
+            const dx = worldX - midX;
+            const dy = worldY - midY;
+
             // Move both corner points by the delta
             pts[p1Idx] = { x: pts[p1Idx].x + dx, y: pts[p1Idx].y + dy };
             pts[p2Idx] = { x: pts[p2Idx].x + dx, y: pts[p2Idx].y + dy };
-            
+
             return { ...w, points: pts };
-        }
+            }
 
-        if(moveMode) { 
-            const dx = cx - pts[idx].x; 
-            const dy = cy - pts[idx].y; 
+            if(moveMode) { 
+            const dx = worldX - pts[idx].x; 
+            const dy = worldY - pts[idx].y; 
             return {...w, points: pts.map(pt => ({x: pt.x + dx, y: pt.y + dy}))}; 
-        } 
+            } 
 
-        if(scaleMode) {
+            if(scaleMode) {
             // Calculate center of the wall
             const centerX = pts.reduce((sum, p) => sum + p.x, 0) / 4;
             const centerY = pts.reduce((sum, p) => sum + p.y, 0) / 4;
-            
+
             // Current distance from center to dragged point
             const oldDx = pts[idx].x - centerX;
             const oldDy = pts[idx].y - centerY;
             const oldDist = Math.sqrt(oldDx*oldDx + oldDy*oldDy);
-            
+
             // New distance from center to cursor
-            const newDx = cx - centerX;
-            const newDy = cy - centerY;
+            const newDx = worldX - centerX;
+            const newDy = worldY - centerY;
             const newDist = Math.sqrt(newDx*newDx + newDy*newDy);
-            
+
             if (oldDist < 1) return w; // Avoid division by zero
-            
+
             const scale = newDist / oldDist;
-            
+
             return {
                 ...w,
                 points: pts.map(pt => ({
@@ -2925,12 +3281,11 @@ export default function App() {
                     y: centerY + (pt.y - centerY) * scale
                 }))
             };
-        }
+            }
 
-        pts[idx] = {x:cx, y:cy}; 
-        return {...w, points: pts}; 
-    })); };
-    const transformGroup = (folderId, dx, dy) => {
+            pts[idx] = {x:worldX, y:worldY};
+            return {...w, points: pts};
+            })); };    const transformGroup = (folderId, dx, dy) => {
         setWalls(prev => prev.map(w => {
             if (w.folderId !== folderId) return w;
             return {
@@ -3070,16 +3425,32 @@ export default function App() {
     const activeWall = walls.find(w => w.id === activeWallId);
     const activeFolder = folders.find(f => f.id === activeFolderId);
 
-    const renderSVG = (isLive) => (
-        <svg className="w-full h-full" style={{backgroundColor: (isLive || menuTab === 'scenes' || !menuOpen) ? 'black' : 'transparent'}}>
-            <defs>
-                 <pattern id="smallGrid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5"/></pattern>
-                 <pattern id="grid" width="100" height="100" patternUnits="userSpaceOnUse"><rect width="100" height="100" fill="url(#smallGrid)"/><path d="M 100 0 L 0 0 0 100" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="1"/></pattern>
-            </defs>
-            {showGuides && !isLive && menuTab !== 'scenes' && (<><rect width="100%" height="100%" fill="url(#grid)" pointerEvents="none" /><line x1="50%" y1="0" x2="50%" y2="100%" stroke="cyan" strokeOpacity="0.5" strokeDasharray="5,5" pointerEvents="none" /><line x1="0" y1="50%" x2="100%" y2="50%" stroke="cyan" strokeOpacity="0.5" strokeDasharray="5,5" pointerEvents="none" /></>)}
-            
-            {/* Group Bounding Boxes */}
-            {!isLive && menuTab !== 'scenes' && folders.map(folder => {
+    const renderSVG = (isLive) => {
+        const ar = projectorAspectRatio;
+        const h = 1000;
+        const w = h * ar;
+
+        return (
+            <svg className="w-full h-full" style={{backgroundColor: (isLive || menuTab === 'scenes' || !menuOpen) ? 'black' : 'transparent'}}>
+                <defs>
+                      <pattern id="smallGrid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5"/></pattern>
+                      <pattern id="grid" width="100" height="100" patternUnits="userSpaceOnUse"><rect width="100" height="100" fill="url(#smallGrid)"/><path d="M 100 0 L 0 0 0 100" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="1"/></pattern>
+                </defs>
+                <g style={{ transform: `translate(${viewportPan.x}px, ${viewportPan.y}px) scale(${viewportZoom})`, transformOrigin: '0 0' }}>
+                    {/* Projector Aspect Ratio Outline */}
+                    {!isLive && (
+                        <rect 
+                            x="0" y="0" width={w} height={h} 
+                            fill="none" stroke="white" strokeWidth="2" strokeDasharray="10,5" opacity="0.4" 
+                            pointerEvents="none"
+                        />
+                    )}
+
+                    {showGuides && !isLive && menuTab !== 'scenes' && (<><rect x="0" y="0" width={w} height={h} fill="url(#grid)" pointerEvents="none" /><line x1={w/2} y1="0" x2={w/2} y2={h} stroke="cyan" strokeOpacity="0.5" strokeDasharray="5,5" pointerEvents="none" /><line x1="0" y1={h/2} x2={w} y2={h/2} stroke="cyan" strokeOpacity="0.5" strokeDasharray="5,5" pointerEvents="none" /></>)}
+
+                    {/* Group Bounding Boxes */}
+                    {!isLive && menuTab !== 'scenes' && folders.map(folder => {
+
                 const folderWalls = walls.filter(w => w.folderId === folder.id && !w.hidden);
                 if (folderWalls.length === 0) return null;
                 
@@ -3221,6 +3592,7 @@ export default function App() {
                 );
             })}
             {(!isLive && activeWall && menuTab !== 'scenes') && activeWall.points.map((p, i) => ( <PointHandle key={`handle-${activeWall.id}-${i}`} index={i} x={p.x} y={p.y} color={activeWall.color} isSelected={true} onDrag={(idx, x, y) => updatePoint(activeWall.id, idx, x, y)} isMoveMode={moveMode} isScaleMode={scaleMode} /> ))}
+            </g>
         </svg>
     );
 
@@ -3259,11 +3631,19 @@ export default function App() {
                                     hiddenDrives={hiddenDrives}
                                     setHiddenDrives={setHiddenDrives}
                                     lowResourceMode={lowResourceMode}
-                                />            <div className={`absolute inset-0 h-full z-0 ${!activeProjectId ? 'hidden' : ''}`}>
-                <div className="absolute inset-0 z-10" onClick={() => setActiveWallId(null)}>
-                    <WallBackgroundLayer walls={walls} currentCueState={currentCueState} isLive={viewMode === 'live'} isTransitioning={transitionMix < 1} shouldShow={menuTab === 'scenes'} />
-                    {(viewMode === 'live' || menuTab === 'scenes') && <TransitioningProjectedContent prevCueState={prevCueState} currentCueState={currentCueState} mix={transitionMix} walls={walls} isLive={viewMode === 'live'} />}
-                    {renderSVG(viewMode === 'live')}
+                                />
+                <div className={`absolute inset-0 h-full z-0 ${!activeProjectId ? 'hidden' : ''}`}>
+                    <div ref={viewportRef} className="absolute inset-0 z-10 overflow-hidden" onClick={() => setActiveWallId(null)} onWheel={handleViewportWheel} onMouseMove={handleViewportMouseMove}>
+                        <WallBackgroundLayer walls={walls} currentCueState={currentCueState} isLive={viewMode === 'live'} isTransitioning={transitionMix < 1} shouldShow={menuTab === 'scenes'} viewportPan={viewportPan} viewportZoom={viewportZoom} />
+                        {(viewMode === 'live' || menuTab === 'scenes') && <TransitioningProjectedContent prevCueState={prevCueState} currentCueState={currentCueState} mix={transitionMix} walls={walls} isLive={viewMode === 'live'} viewportPan={viewportPan} viewportZoom={viewportZoom} />}
+                        {renderSVG(viewMode === 'live')}
+                    </div>
+
+                    {monitors.length === 1 && (
+                        <div className="absolute top-4 right-4 z-50 bg-orange-600/90 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 shadow-lg animate-pulse">
+                            <MonitorOff size={14} /> Only one display connected
+                        </div>
+                    )}
                     {viewMode === '2d' && (
                         <div className="absolute top-4 left-4 pointer-events-none select-none drop-shadow-md z-50">
                             {menuTab === 'scenes' ? (
@@ -3324,12 +3704,10 @@ export default function App() {
                             </>)}
                         </div>
                     )}
-                </div>
-            </div>
 
-            {/* Redundant notification block removed */}
+                    {/* Redundant notification block removed */}
 
-            {menuTab === 'scenes' && viewMode !== 'live' && showNodeEditor && (
+                    {menuTab === 'scenes' && viewMode !== 'live' && showNodeEditor && (
                 <div 
                     className={`absolute bottom-0 left-0 h-[45%] z-30 border-t border-zinc-800 bg-zinc-950/70 backdrop-blur-md transition-all duration-500 ease-in-out ${lowResourceMode ? 'low-resource-mode-panel' : ''}`}
                     style={{ right: menuOpen ? '272px' : '0px' }}
@@ -3557,6 +3935,8 @@ export default function App() {
                                                                     {isActive ? <Play size={12} fill="currentColor" className="text-purple-400 drop-shadow-[0_0_5px_rgba(168,85,247,0.5)]"/> : <span className="w-3 h-3 rounded-full border border-zinc-800 group-hover:border-zinc-600 transition-colors"/>}
                                                                     <span className="truncate flex-1 font-bold tracking-wide">{cue.name}</span>
                                                                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                        <button onClick={(e) => { e.stopPropagation(); moveCue(scene.id, cIdx, -1); }} className="text-zinc-600 hover:text-white p-0.5" title="Move Up"><ChevronUp size={12}/></button>
+                                                                        <button onClick={(e) => { e.stopPropagation(); moveCue(scene.id, cIdx, 1); }} className="text-zinc-600 hover:text-white p-0.5" title="Move Down"><ChevronDown size={12}/></button>
                                                                         <button onClick={(e) => { e.stopPropagation(); deleteCue(scene.id, cue.id); }} className="text-zinc-600 hover:text-red-400 p-1"><Trash2 size={12}/></button>
                                                                     </div>
                                                                 </div>
@@ -3593,9 +3973,8 @@ export default function App() {
                             </div>
                         )}
                     </div>
-                </div>
-            )}
-            <Modal {...modal} onCancel={() => setModal(prev => ({ ...prev, isOpen: false }))} />
-        </div>
+                )}
+                <Modal {...modal} onCancel={() => setModal(prev => ({ ...prev, isOpen: false }))} />
+            </div>
     );
 }

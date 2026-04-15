@@ -35,9 +35,11 @@ const getInterpolatedNode = (prevNode, currNode, mix) => {
 };
 
 // TiledImage component (copied from App.jsx)
-const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height }) => {
+const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection }) => {
     const canvasRef = useRef(null);
     const [img, setImg] = useState(null);
+    const timeRef = useRef(0);
+    const lastTimeRef = useRef(0);
 
     useEffect(() => {
         const i = new Image();
@@ -45,21 +47,43 @@ const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height 
         i.onload = () => setImg(i);
     }, [src]);
 
-    useEffect(() => {
+    const render = useCallback((time) => {
         if (!img || !canvasRef.current) return;
+        
+        const delta = time - (lastTimeRef.current || time);
+        lastTimeRef.current = time;
+        
+        if (isAnimatingPos) {
+            timeRef.current += delta * 0.001;
+        }
+
         const canvas = canvasRef.current;
         const ctx = canvas.getContext('2d');
         const w = width || 1024;
         const h = height || 1024;
 
         ctx.clearRect(0, 0, w, h);
-        
-        // Create pattern
         const pattern = ctx.createPattern(img, 'repeat');
-        
-        // Center of the wall for rotation/scale
-        const cx = w * (alignX / 100);
-        const cy = h * (alignY / 100);
+
+        let offsetX = alignX;
+        let offsetY = alignY;
+
+        if (isAnimatingPos) {
+            const sx = animSpeedX ?? 0.1;
+            const sy = animSpeedY ?? 0.1;
+            
+            if (posAnimDirection === 'loop') {
+                offsetX = (alignX + timeRef.current * sx * 100) % 100;
+                offsetY = (alignY + timeRef.current * sy * 100) % 100;
+            } else {
+                // Ping-pong
+                offsetX = alignX + Math.sin(timeRef.current * sx * 5) * 50;
+                offsetY = alignY + Math.cos(timeRef.current * sy * 5) * 50;
+            }
+        }
+
+        const cx = w * (offsetX / 100);
+        const cy = h * (offsetY / 100);
         
         const matrix = new DOMMatrix();
         matrix.translateSelf(cx, cy);
@@ -70,7 +94,21 @@ const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height 
         
         ctx.fillStyle = pattern;
         ctx.fillRect(0, 0, w, h);
-    }, [img, scale, rotate, alignX, alignY, width, height]);
+
+        if (isAnimatingPos) {
+            requestAnimationFrame(render);
+        }
+    }, [img, scale, rotate, alignX, alignY, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection]);
+
+    useEffect(() => {
+        if (!isAnimatingPos) {
+            render(0);
+        } else {
+            lastTimeRef.current = performance.now();
+            const animId = requestAnimationFrame(render);
+            return () => cancelAnimationFrame(animId);
+        }
+    }, [isAnimatingPos, render]);
 
     return <canvas ref={canvasRef} width={width || 1024} height={height || 1024} style={{ width: '100%', height: '100%', backgroundColor: isLive ? 'black' : 'transparent' }} />;
 };
@@ -198,6 +236,10 @@ const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLi
                     isLive={isLive}
                     width={width}
                     height={height}
+                    isAnimatingPos={node.data.isAnimatingPos}
+                    animSpeedX={node.data.animSpeedX}
+                    animSpeedY={node.data.animSpeedY}
+                    posAnimDirection={node.data.posAnimDirection}
                 />
             );
         }
