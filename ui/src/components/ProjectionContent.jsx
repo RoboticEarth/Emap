@@ -88,7 +88,12 @@ const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
         const matrix = new DOMMatrix();
         matrix.translateSelf(cx, cy);
         matrix.rotateSelf(rotate);
-        matrix.scaleSelf(scale, scale);
+        
+        // Use baseScale = 1.0 for tiling to prevent "zooming in" on small images
+        const baseScale = 1.0;
+        const finalScale = baseScale * scale;
+        matrix.scaleSelf(finalScale, finalScale);
+        
         matrix.translateSelf(-img.width / 2, -img.height / 2);
         pattern.setTransform(matrix);
         
@@ -109,6 +114,93 @@ const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
             return () => cancelAnimationFrame(animId);
         }
     }, [isAnimatingPos, render]);
+
+    return <canvas ref={canvasRef} width={width || 1024} height={height || 1024} style={{ width: '100%', height: '100%', backgroundColor: isLive ? 'black' : 'transparent' }} />;
+};
+
+const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection, enableAudio }) => {
+    const canvasRef = useRef(null);
+    const videoRef = useRef(null);
+    const timeRef = useRef(0);
+    const lastTimeRef = useRef(0);
+
+    useEffect(() => {
+        const v = document.createElement('video');
+        v.src = src;
+        v.loop = true;
+        v.muted = !enableAudio;
+        v.playsInline = true;
+        v.crossOrigin = "anonymous";
+        v.play().catch(e => console.log("Video play failed:", e));
+        videoRef.current = v;
+        return () => {
+            v.pause();
+            v.src = "";
+            v.load();
+        };
+    }, [src, enableAudio]);
+
+    const render = useCallback((time) => {
+        if (!videoRef.current || !canvasRef.current) return;
+        const v = videoRef.current;
+        if (v.readyState < 2) {
+            requestAnimationFrame(render);
+            return;
+        }
+
+        const delta = time - (lastTimeRef.current || time);
+        lastTimeRef.current = time;
+
+        if (isAnimatingPos) {
+            timeRef.current += delta * 0.001;
+        }
+
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+        const w = width || 1024;
+        const h = height || 1024;
+
+        ctx.clearRect(0, 0, w, h);
+        try {
+            const pattern = ctx.createPattern(v, 'repeat');
+            if (pattern) {
+                let offsetX = alignX;
+                let offsetY = alignY;
+
+                if (isAnimatingPos) {
+                    const sx = animSpeedX ?? 0.1;
+                    const sy = animSpeedY ?? 0.1;
+                    if (posAnimDirection === 'loop') {
+                        offsetX = (alignX + timeRef.current * sx * 100) % 100;
+                        offsetY = (alignY + timeRef.current * sy * 100) % 100;
+                    } else {
+                        offsetX = alignX + Math.sin(timeRef.current * sx * 5) * 50;
+                        offsetY = alignY + Math.cos(timeRef.current * sy * 5) * 50;
+                    }
+                }
+
+                const cx = w * (offsetX / 100);
+                const cy = h * (offsetY / 100);
+                const matrix = new DOMMatrix();
+                matrix.translateSelf(cx, cy);
+                matrix.rotateSelf(rotate);
+                matrix.scaleSelf(scale, scale);
+                matrix.translateSelf(-v.videoWidth / 2, -v.videoHeight / 2);
+                pattern.setTransform(matrix);
+                ctx.fillStyle = pattern;
+                ctx.fillRect(0, 0, w, h);
+            }
+        } catch (e) {
+            // Pattern might fail if video not ready
+        }
+
+        requestAnimationFrame(render);
+    }, [scale, rotate, alignX, alignY, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection]);
+
+    useEffect(() => {
+        const animId = requestAnimationFrame(render);
+        return () => cancelAnimationFrame(animId);
+    }, [render]);
 
     return <canvas ref={canvasRef} width={width || 1024} height={height || 1024} style={{ width: '100%', height: '100%', backgroundColor: isLive ? 'black' : 'transparent' }} />;
 };
@@ -225,23 +317,43 @@ const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLi
         const style = getStyle();
         const isTiling = node.data.tiling ?? false;
 
-        if (isTiling && node.type === 'image' && node.data.value) {
-            return (
-                <TiledImage 
-                    src={node.data.value.split('?')[0]} 
-                    scale={node.data.scale || 1} 
-                    rotate={node.data.rotate || 0}
-                    alignX={node.data.alignX ?? 50}
-                    alignY={node.data.alignY ?? 50}
-                    isLive={isLive}
-                    width={width}
-                    height={height}
-                    isAnimatingPos={node.data.isAnimatingPos}
-                    animSpeedX={node.data.animSpeedX}
-                    animSpeedY={node.data.animSpeedY}
-                    posAnimDirection={node.data.posAnimDirection}
-                />
-            );
+        if (isTiling && node.data.value) {
+            if (node.type === 'image') {
+                return (
+                    <TiledImage 
+                        src={node.data.value.split('?')[0]} 
+                        scale={node.data.scale || 1} 
+                        rotate={node.data.rotate || 0}
+                        alignX={node.data.alignX ?? 50}
+                        alignY={node.data.alignY ?? 50}
+                        isLive={isLive}
+                        width={width}
+                        height={height}
+                        isAnimatingPos={node.data.isAnimatingPos}
+                        animSpeedX={node.data.animSpeedX}
+                        animSpeedY={node.data.animSpeedY}
+                        posAnimDirection={node.data.posAnimDirection}
+                    />
+                );
+            } else if (node.type === 'video') {
+                return (
+                    <TiledVideo 
+                        src={node.data.value.split('?')[0]} 
+                        scale={node.data.scale || 1} 
+                        rotate={node.data.rotate || 0}
+                        alignX={node.data.alignX ?? 50}
+                        alignY={node.data.alignY ?? 50}
+                        isLive={isLive}
+                        width={width}
+                        height={height}
+                        isAnimatingPos={node.data.isAnimatingPos}
+                        animSpeedX={node.data.animSpeedX}
+                        animSpeedY={node.data.animSpeedY}
+                        posAnimDirection={node.data.posAnimDirection}
+                        enableAudio={node.data.enableAudio}
+                    />
+                );
+            }
         }
 
         return (
@@ -302,7 +414,7 @@ const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLi
 
 
 // TransitioningProjectedContent component
-const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, walls, isLive }) => {
+const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, walls, isLive, viewportPan, viewportZoom }) => {
     const getRootNodeId = (state, wallId) => {
         if (!state || !state.nodes) return null;
         const out = state.nodes.find(n => n.type === 'output' && n.data.wallId === wallId);
@@ -312,9 +424,10 @@ const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, wal
     };
 
     const isTransitioning = mix < 1 && !!prevCueState;
+    const transform = viewportPan && viewportZoom ? `translate(${viewportPan.x}px, ${viewportPan.y}px) scale(${viewportZoom})` : 'none';
 
     return (
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute inset-0 overflow-hidden pointer-events-none" style={{ transform, transformOrigin: '0 0' }}>
             {walls.map(wall => {
                 const prevRootId = getRootNodeId(prevCueState, wall.id);
                 const currRootId = getRootNodeId(currentCueState, wall.id);
@@ -371,12 +484,14 @@ const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, wal
 };
 
 // WallBackgroundLayer component (copied from App.jsx)
-const WallBackgroundLayer = ({ walls, currentCueState, isLive, isTransitioning, shouldShow }) => {
+const WallBackgroundLayer = ({ walls, currentCueState, isLive, isTransitioning, shouldShow, viewportPan, viewportZoom }) => {
     if (isLive || isTransitioning || !shouldShow) return null;
+    const transform = viewportPan && viewportZoom ? `translate(${viewportPan.x}px, ${viewportPan.y}px) scale(${viewportZoom})` : 'none';
 
     return (
         <svg className="absolute inset-0 w-full h-full pointer-events-none z-0" style={{backgroundColor: 'transparent'}}>
-            {walls.map(wall => {
+            <g style={{ transform, transformOrigin: '0 0' }}>
+                {walls.map(wall => {
                 const hasContent = currentCueState?.nodes?.some(n => 
                     n.type === 'output' && 
                     n.data.wallId === wall.id && 
@@ -391,6 +506,7 @@ const WallBackgroundLayer = ({ walls, currentCueState, isLive, isTransitioning, 
                     </g>
                 );
             })}
+            </g>
         </svg>
     );
 };
@@ -420,14 +536,15 @@ const WarpedTextureGrid = ({ wallPoints }) => {
 };
 
 // Main ProjectionContent Component
-export const ProjectionContent = ({ walls, currentCueState, prevCueState, transitionMix, viewMode, menuTab, showGuides, activeWallId }) => {
+export const ProjectionContent = ({ walls, currentCueState, prevCueState, transitionMix, viewMode, menuTab, showGuides, activeWallId, viewportPan, viewportZoom }) => {
     const isLive = viewMode === 'live';
     const isTransitioning = transitionMix < 1;
+    const transform = viewportPan && viewportZoom ? `translate(${viewportPan.x}px, ${viewportPan.y}px) scale(${viewportZoom})` : 'none';
 
     return (
         <div className="absolute inset-0 h-full z-0 bg-black">
-            <WallBackgroundLayer walls={walls} currentCueState={currentCueState} isLive={isLive} isTransitioning={isTransitioning} shouldShow={menuTab === 'scenes'} />
-            <TransitioningProjectedContent prevCueState={prevCueState} currentCueState={currentCueState} mix={transitionMix} walls={walls} isLive={isLive} />
+            <WallBackgroundLayer walls={walls} currentCueState={currentCueState} isLive={isLive} isTransitioning={isTransitioning} shouldShow={menuTab === 'scenes'} viewportPan={viewportPan} viewportZoom={viewportZoom} />
+            <TransitioningProjectedContent prevCueState={prevCueState} currentCueState={currentCueState} mix={transitionMix} walls={walls} isLive={isLive} viewportPan={viewportPan} viewportZoom={viewportZoom} />
             
             {/* SVG Overlay for Mapping Geometry */}
             <svg className="absolute inset-0 w-full h-full pointer-events-none">
@@ -435,14 +552,14 @@ export const ProjectionContent = ({ walls, currentCueState, prevCueState, transi
                      <pattern id="smallGrid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5"/></pattern>
                      <pattern id="grid" width="100" height="100" patternUnits="userSpaceOnUse"><rect width="100" height="100" fill="url(#smallGrid)"/><path d="M 100 0 L 0 0 0 100" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="1"/></pattern>
                 </defs>
-                
-                {showGuides && !isLive && menuTab !== 'scenes' && (
-                    <>
-                        <rect width="100%" height="100%" fill="url(#grid)" />
-                        <line x1="50%" y1="0" x2="50%" y2="100%" stroke="cyan" strokeOpacity="0.5" strokeDasharray="5,5" />
-                        <line x1="0" y1="50%" x2="100%" y2="50%" stroke="cyan" strokeOpacity="0.5" strokeDasharray="5,5" />
-                    </>
-                )}
+                <g style={{ transform, transformOrigin: '0 0' }}>
+                    {showGuides && !isLive && menuTab !== 'scenes' && (
+                        <>
+                            <rect width="5000" height="5000" x="-2000" y="-2000" fill="url(#grid)" />
+                            <line x1="0" y1="-2000" x2="0" y2="3000" stroke="cyan" strokeOpacity="0.5" strokeDasharray="5,5" />
+                            <line x1="-2000" y1="0" x2="3000" y2="0" stroke="cyan" strokeOpacity="0.5" strokeDasharray="5,5" />
+                        </>
+                    )}
 
                 {walls.map(wall => {
                     const isSelected = wall.id === activeWallId;
@@ -471,10 +588,11 @@ export const ProjectionContent = ({ walls, currentCueState, prevCueState, transi
                                 </>
                             )}
                             </g>
-                            );
-                            })}
-                            </svg>
-                            </div>
+                    );
+                })}
+                </g>
+            </svg>
+        </div>
                             );
                             };
 // Also export ProceduralLib and ColorUtils if they are used directly in any sub-components that get passed here

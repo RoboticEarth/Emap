@@ -127,12 +127,18 @@ function Projection() {
         return () => clearInterval(intervalId); // Cleanup interval on unmount
     }, [projectData]);
 
-    // Update currentCueObjRef.current and transitionDetailsRef.current whenever relevant state changes
     useEffect(() => {
         if (projectData && activeSelection) {
             const cue = getCueData(projectData.scenes, activeSelection.sceneId, activeSelection.cueId);
+            // If we're starting a transition, keep using the previous cue's transition details!
+            // Wait, we need to know what the previous cue was.
+            if (currentCueObjRef.current && currentCueObjRef.current.id !== cue?.id) {
+                transitionDetailsRef.current = currentCueObjRef.current;
+            } else if (!transitionDetailsRef.current) {
+                transitionDetailsRef.current = cue;
+            }
+            
             currentCueObjRef.current = cue;
-            transitionDetailsRef.current = cue; // Transition details are part of the cue object
         } else {
             currentCueObjRef.current = null;
             transitionDetailsRef.current = null;

@@ -28,7 +28,9 @@ const RotationControl = ({ value, onChange }) => {
         const rect = circleRef.current.getBoundingClientRect();
         const cx = rect.left + rect.width / 2;
         const cy = rect.top + rect.height / 2;
-        const angle = Math.atan2(e.clientY - cy, e.clientX - cx) * (180 / Math.PI);
+        let angle = Math.atan2(e.clientY - cy, e.clientX - cx) * (180 / Math.PI) + 90;
+        if (angle < 0) angle += 360;
+        if (angle >= 360) angle -= 360;
         onChange(Math.round(angle));
     }, [isDragging, onChange]);
 
@@ -36,7 +38,7 @@ const RotationControl = ({ value, onChange }) => {
 
     useEffect(() => {
         if (isDragging) {
-            window.addEventListener('mousemove', handleMouseMove);
+            window.addEventListener('mousemove', handleMouseMove, { passive: true });
             window.addEventListener('mouseup', handleMouseUp);
         }
         return () => {
@@ -48,46 +50,51 @@ const RotationControl = ({ value, onChange }) => {
     return (
         <div className="pt-2 border-t border-zinc-700/50">
             <div className="flex justify-between items-center mb-2">
-                <label className="text-xs text-gray-400 font-bold flex items-center gap-2">
-                    <Rotate3D size={12} className="text-blue-400" /> Rotation
+                <label className="text-sm text-gray-300 font-black flex items-center gap-2 uppercase tracking-tight">
+                    <Rotate3D size={14} className="text-blue-400" /> Rotation
                 </label>
-                <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-700 rounded px-2 py-0.5">
+                <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-700 rounded-lg px-2.5 py-1 shadow-inner">
                     <input 
                         type="number" 
                         value={value} 
-                        onChange={(e) => onChange(parseInt(e.target.value) || 0)}
-                        className="bg-transparent border-none outline-none text-xs font-bold text-blue-400 w-10 p-0 text-right"
+                        onChange={(e) => {
+                            let val = parseInt(e.target.value) || 0;
+                            while(val < 0) val += 360;
+                            while(val >= 360) val -= 360;
+                            onChange(val);
+                        }}
+                        className="bg-transparent border-none outline-none text-xs font-black text-blue-400 w-10 p-0 text-right"
                     />
-                    <span className="text-[10px] text-zinc-600 font-bold">°</span>
+                    <span className="text-[10px] text-zinc-600 font-black">°</span>
                 </div>
             </div>
             
-            <div className="flex items-center gap-4 bg-zinc-950/50 p-3 rounded-xl border border-zinc-800/50 shadow-inner">
+            <div className="flex items-center gap-4 bg-zinc-950/80 p-4 rounded-2xl border border-zinc-800/50 shadow-2xl">
                 <div 
                     ref={circleRef}
-                    className="relative w-16 h-16 rounded-full border-2 border-zinc-700 bg-zinc-900 cursor-pointer flex items-center justify-center group shadow-lg"
+                    className="relative w-20 h-20 rounded-full border-2 border-zinc-800 bg-zinc-900 cursor-pointer flex items-center justify-center group shadow-xl transition-colors hover:border-zinc-700"
                     onMouseDown={(e) => { e.stopPropagation(); setIsDragging(true); }}
                 >
                     {/* Clock marks */}
-                    {[0, 90, 180, 270].map(deg => (
-                        <div key={deg} className="absolute w-0.5 h-1.5 bg-zinc-700" style={{ transform: `rotate(${deg}deg) translateY(-26px)` }} />
+                    {[0, 45, 90, 135, 180, 225, 270, 315].map(deg => (
+                        <div key={deg} className={`absolute ${deg % 90 === 0 ? 'w-0.5 h-2.5 bg-zinc-600' : 'w-px h-1.5 bg-zinc-800'}`} style={{ transform: `rotate(${deg}deg) translateY(-34px)` }} />
                     ))}
                     
                     {/* Rotating hand */}
                     <div 
-                        className="absolute w-1 h-7 bg-blue-500 origin-bottom rounded-full"
-                        style={{ transform: `rotate(${value + 90}deg) translateY(-14px)`, boxShadow: '0 0 10px rgba(59, 130, 246, 0.6)' }}
+                        className="absolute w-1 h-8 bg-blue-500 origin-bottom rounded-full"
+                        style={{ transform: `rotate(${value}deg) translateY(-16px)`, boxShadow: '0 0 15px rgba(59, 130, 246, 0.8)' }}
                     />
                     
                     {/* Center dot */}
-                    <div className="w-2 h-2 rounded-full bg-zinc-600 z-10 border border-zinc-800" />
+                    <div className="w-2.5 h-2.5 rounded-full bg-zinc-700 z-10 border border-zinc-900 shadow-inner" />
                     
                     {/* Grab handle */}
                     <div 
-                        className="absolute w-4 h-4 rounded-full bg-white border-2 border-blue-500 shadow-xl transform -translate-x-1/2 -translate-y-1/2 z-20 transition-transform group-active:scale-110"
+                        className="absolute w-5 h-5 rounded-full bg-white border-2 border-blue-500 shadow-2xl transform -translate-x-1/2 -translate-y-1/2 z-20 transition-all group-active:scale-110"
                         style={{ 
-                            left: `${50 + 40 * Math.cos((value) * Math.PI / 180)}%`,
-                            top: `${50 + 40 * Math.sin((value) * Math.PI / 180)}%`
+                            left: `${50 + 40 * Math.cos((value - 90) * Math.PI / 180)}%`,
+                            top: `${50 + 40 * Math.sin((value - 90) * Math.PI / 180)}%`
                         }}
                     />
                 </div>
@@ -97,7 +104,7 @@ const RotationControl = ({ value, onChange }) => {
                         <button 
                             key={deg}
                             onClick={() => onChange(deg)}
-                            className={`py-1 rounded text-[10px] font-bold border transition-all ${value === deg ? 'bg-blue-600 border-blue-400 text-white' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-zinc-700'}`}
+                            className={`py-1.5 rounded-lg text-[10px] font-black border transition-all ${value === deg ? 'bg-blue-600 border-blue-400 text-white shadow-lg shadow-blue-900/40' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-zinc-700'}`}
                         >
                             {deg}°
                         </button>
@@ -3037,7 +3044,7 @@ export default function App() {
         document.documentElement.requestFullscreen().catch(e => console.log("Fullscreen request failed:", e)); 
     };
     const getCueData = (sId, cId) => { const s = scenes.find(x => x.id === sId); return s ? s.cues.find(x => x.id === cId) : null; };
-    const targetCueId = activeSelection.type === 'cue' ? activeSelection.cueId : activeSelection.nextCueId;
+    const targetCueId = activeSelection.type === 'cue' ? activeSelection.cueId : activeSelection.prevCueId;
     const currentCueObj = useMemo(() => getCueData(activeSelection.sceneId, targetCueId), [activeSelection, scenes]);
     const currentCueObjRef = useRef(currentCueObj);
     useEffect(() => { currentCueObjRef.current = currentCueObj; }, [currentCueObj]);
@@ -3595,6 +3602,7 @@ export default function App() {
             </g>
         </svg>
     );
+};
 
     return (
         <div className={`w-full h-full relative font-sans text-white bg-zinc-950 flex flex-col ${lowResourceMode ? 'low-resource-mode' : ''}`}>
@@ -3704,8 +3712,6 @@ export default function App() {
                             </>)}
                         </div>
                     )}
-
-                    {/* Redundant notification block removed */}
 
                     {menuTab === 'scenes' && viewMode !== 'live' && showNodeEditor && (
                 <div 
@@ -3934,7 +3940,7 @@ export default function App() {
                                                                 <div onClick={() => setActiveSelection({ type: 'cue', sceneId: scene.id, cueId: cue.id })} className={`flex items-center gap-3 p-2.5 rounded-lg text-[11px] font-medium cursor-pointer transition-all group ${isActive ? 'bg-purple-600/20 border-l-4 border-purple-500 text-white shadow-inner' : 'hover:bg-zinc-800/50 text-zinc-400 border-l-4 border-transparent'}`}>
                                                                     {isActive ? <Play size={12} fill="currentColor" className="text-purple-400 drop-shadow-[0_0_5px_rgba(168,85,247,0.5)]"/> : <span className="w-3 h-3 rounded-full border border-zinc-800 group-hover:border-zinc-600 transition-colors"/>}
                                                                     <span className="truncate flex-1 font-bold tracking-wide">{cue.name}</span>
-                                                                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                    <div className="flex items-center gap-1 opacity-40 hover:opacity-100 transition-opacity">
                                                                         <button onClick={(e) => { e.stopPropagation(); moveCue(scene.id, cIdx, -1); }} className="text-zinc-600 hover:text-white p-0.5" title="Move Up"><ChevronUp size={12}/></button>
                                                                         <button onClick={(e) => { e.stopPropagation(); moveCue(scene.id, cIdx, 1); }} className="text-zinc-600 hover:text-white p-0.5" title="Move Down"><ChevronDown size={12}/></button>
                                                                         <button onClick={(e) => { e.stopPropagation(); deleteCue(scene.id, cue.id); }} className="text-zinc-600 hover:text-red-400 p-1"><Trash2 size={12}/></button>
@@ -3973,8 +3979,10 @@ export default function App() {
                             </div>
                         )}
                     </div>
-                )}
-                <Modal {...modal} onCancel={() => setModal(prev => ({ ...prev, isOpen: false }))} />
-            </div>
+                </div>
+            )}
+            <Modal {...modal} onCancel={() => setModal(prev => ({ ...prev, isOpen: false }))} />
+        </div>
+    </div>
     );
 }
