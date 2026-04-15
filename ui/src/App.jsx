@@ -1387,7 +1387,7 @@ const CustomSelect = ({ value, onChange, options, className = "", buttonClassNam
 };
 // --- RENDER ENGINE ---
 
-const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive }) => {
+const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height }) => {
     const canvasRef = useRef(null);
     const [img, setImg] = useState(null);
 
@@ -1401,30 +1401,18 @@ const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive }) => {
         if (!img || !canvasRef.current) return;
         const canvas = canvasRef.current;
         const ctx = canvas.getContext('2d');
-        const w = canvas.width;
-        const h = canvas.height;
+        const w = width || 1024;
+        const h = height || 1024;
 
         ctx.clearRect(0, 0, w, h);
         
         // Create pattern
         const pattern = ctx.createPattern(img, 'repeat');
         
-        ctx.save();
-        
         // Center of the wall for rotation/scale
         const cx = w * (alignX / 100);
         const cy = h * (alignY / 100);
         
-        ctx.translate(cx, cy);
-        ctx.rotate((rotate * Math.PI) / 180);
-        ctx.scale(scale, scale);
-        // Move back so the pattern is "centered" on the align points
-        ctx.translate(-img.width / 2, -img.height / 2);
-        
-        ctx.fillStyle = pattern;
-        
-        // To ensure we cover everything after rotation/scale, we draw a huge rectangle
-        // or just transform the pattern matrix. Canvas pattern.setTransform is better.
         const matrix = new DOMMatrix();
         matrix.translateSelf(cx, cy);
         matrix.rotateSelf(rotate);
@@ -1432,15 +1420,14 @@ const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive }) => {
         matrix.translateSelf(-img.width / 2, -img.height / 2);
         pattern.setTransform(matrix);
         
-        ctx.restore();
         ctx.fillStyle = pattern;
         ctx.fillRect(0, 0, w, h);
-    }, [img, scale, rotate, alignX, alignY]);
+    }, [img, scale, rotate, alignX, alignY, width, height]);
 
-    return <canvas ref={canvasRef} width={1024} height={1024} style={{ width: '100%', height: '100%', backgroundColor: isLive ? 'black' : 'transparent' }} />;
+    return <canvas ref={canvasRef} width={width || 1024} height={height || 1024} style={{ width: '100%', height: '100%', backgroundColor: isLive ? 'black' : 'transparent' }} />;
 };
 
-const RenderNode = ({ nodeId, nodes, connections, resolution, wallColor, isLive, isTransitioning }) => {
+const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLive, isTransitioning }) => {
     const node = nodes.find(n => n.id === nodeId);
     if (!node) return null;
 
@@ -1482,6 +1469,8 @@ const RenderNode = ({ nodeId, nodes, connections, resolution, wallColor, isLive,
                     alignX={node.data.alignX ?? 50}
                     alignY={node.data.alignY ?? 50}
                     isLive={isLive}
+                    width={width}
+                    height={height}
                 />
             );
         }
@@ -1524,7 +1513,7 @@ const RenderNode = ({ nodeId, nodes, connections, resolution, wallColor, isLive,
         return (
             <div style={{position: 'relative', width: '100%', height: '100%'}}>
                 <div style={{position: 'absolute', inset: 0}}>
-                    {baseConn && <RenderNode nodeId={baseConn.from} nodes={nodes} connections={connections} resolution={resolution} wallColor={wallColor} isLive={isLive} isTransitioning={isTransitioning} />}
+                    {baseConn && <RenderNode nodeId={baseConn.from} nodes={nodes} connections={connections} width={width} height={height} wallColor={wallColor} isLive={isLive} isTransitioning={isTransitioning} />}
                 </div>
                 {blendConn && (
                     <div style={{
@@ -1532,7 +1521,7 @@ const RenderNode = ({ nodeId, nodes, connections, resolution, wallColor, isLive,
                         inset: 0, 
                         mixBlendMode: node.data.blendMode || 'normal'
                     }}>
-                         <RenderNode nodeId={blendConn.from} nodes={nodes} connections={connections} resolution={resolution} wallColor={wallColor} isLive={isLive} isTransitioning={isTransitioning} />
+                         <RenderNode nodeId={blendConn.from} nodes={nodes} connections={connections} width={width} height={height} wallColor={wallColor} isLive={isLive} isTransitioning={isTransitioning} />
                     </div>
                 )}
             </div>
@@ -1598,7 +1587,8 @@ const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, wal
                             nodeId={currRootId} 
                             nodes={nodesToUse} 
                             connections={currentCueState.connections} 
-                            resolution={height} 
+                            width={width}
+                            height={height}
                             wallColor={wall.color} 
                             isLive={isLive} 
                             isTransitioning={isTransitioning} 
@@ -1612,7 +1602,7 @@ const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, wal
                     <div key={wall.id} className="absolute left-0 top-0 origin-top-left will-change-transform" style={{ width: `${width}px`, height: `${height}px`, transform: cssM, overflow: 'hidden' }}>
                         {isTransitioning && !isSameNode && prevRootId && (
                             <div key={prevRootId} style={{ opacity: 1 - mix, position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
-                                        <RenderNode nodeId={prevRootId} nodes={prevCueState.nodes} connections={prevCueState.connections} resolution={height} wallColor={wall.color} isLive={isLive} isTransitioning={isTransitioning} />
+                                        <RenderNode nodeId={prevRootId} nodes={prevCueState.nodes} connections={prevCueState.connections} width={width} height={height} wallColor={wall.color} isLive={isLive} isTransitioning={isTransitioning} />
                             </div>
                         )}
                         {currentNodeToRender && (
