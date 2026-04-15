@@ -593,8 +593,9 @@ export const ProjectionContent = ({ walls, currentCueState, prevCueState, transi
                 </g>
             </svg>
         </div>
-                            );
-                            };
+    );
+};
+
 // Also export ProceduralLib and ColorUtils if they are used directly in any sub-components that get passed here
 // For now, they are only used within NoiseCanvas, so direct export might not be needed unless used elsewhere.
 // But it's good practice to ensure all dependencies are resolved.

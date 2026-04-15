@@ -83,7 +83,13 @@ const RotationControl = ({ value, onChange }) => {
                     {/* Rotating hand */}
                     <div 
                         className="absolute w-1 h-8 bg-blue-500 origin-bottom rounded-full"
-                        style={{ transform: `rotate(${value}deg) translateY(-16px)`, boxShadow: '0 0 15px rgba(59, 130, 246, 0.8)' }}
+                        style={{ 
+                            bottom: '50%',
+                            left: 'calc(50% - 2px)',
+                            transform: `rotate(${value}deg)`, 
+                            boxShadow: '0 0 15px rgba(59, 130, 246, 0.8)',
+                            transformOrigin: '50% 100%'
+                        }}
                     />
                     
                     {/* Center dot */}
@@ -1109,7 +1115,18 @@ const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, hidde
                                             <span className="text-[10px] text-zinc-500 font-bold uppercase">Video Asset</span>
                                         </div>
                                     ) : (
-                                        <img src={item.url} className="w-full h-full object-cover" loading="lazy" alt="" />
+                                        <img 
+                                            src={item.url + (lowResourceMode ? "?thumb=1" : "")} 
+                                            className="w-full h-full object-cover" 
+                                            loading="lazy" 
+                                            alt="" 
+                                            onError={(e) => {
+                                                // If thumbnail fails or doesn't exist, try original
+                                                if (e.target.src.includes("?thumb=1")) {
+                                                    e.target.src = item.url;
+                                                }
+                                            }}
+                                        />
                                     )}                                                                
                                     
                                     <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">                                    

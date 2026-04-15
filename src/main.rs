@@ -825,7 +825,10 @@ async fn save_asset(data: web::Data<AppState>, id: web::Path<String>, req: HttpR
 }
 
 #[derive(Deserialize)]
-struct GetAssetQuery { res: Option<u32> }
+struct GetAssetQuery { 
+    res: Option<u32>,
+    thumb: Option<u32>
+}
 
 #[get("/api/asset/{id}")]
 async fn get_asset(data: web::Data<AppState>, req: HttpRequest, id: web::Path<String>, query: web::Query<GetAssetQuery>) -> impl Responder {
@@ -842,11 +845,22 @@ async fn get_asset(data: web::Data<AppState>, req: HttpRequest, id: web::Path<St
         _ => return HttpResponse::NotFound().finish()
     };
 
+    // Priority 1: Specific resolution request
     if let Some(res) = query.res {
         let base_name = file_path.file_stem().unwrap_or_default().to_string_lossy().to_string();
         let ext = file_path.extension().unwrap_or_default().to_string_lossy().to_string();
         let run_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let preview_path = run_dir.join("assets").join(".previews").join(format!("{}_{}p.{}", base_name, res, ext));
+        if preview_path.exists() {
+            file_path = preview_path;
+        }
+    }
+    // Priority 2: Thumbnail request (use 720p as default thumbnail if available)
+    else if query.thumb.is_some() {
+        let base_name = file_path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        let ext = file_path.extension().unwrap_or_default().to_string_lossy().to_string();
+        let run_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let preview_path = run_dir.join("assets").join(".previews").join(format!("{}_720p.{}", base_name, ext));
         if preview_path.exists() {
             file_path = preview_path;
         }
