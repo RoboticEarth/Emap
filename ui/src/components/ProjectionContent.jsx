@@ -38,17 +38,24 @@ const getInterpolatedNode = (prevNode, currNode, mix) => {
 const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection }) => {
     const canvasRef = useRef(null);
     const [img, setImg] = useState(null);
+    const [error, setError] = useState(false);
     const timeRef = useRef(0);
     const lastTimeRef = useRef(0);
 
     useEffect(() => {
+        setError(false);
         const i = new Image();
         i.src = src;
         i.onload = () => setImg(i);
+        i.onerror = () => {
+            console.error("Tiled image load failed:", src);
+            setError(true);
+        };
     }, [src]);
 
     const render = useCallback((time) => {
-        if (!img || !canvasRef.current) return;
+        const canvas = canvasRef.current;
+        if (!canvas) return;
         
         const delta = time - (lastTimeRef.current || time);
         lastTimeRef.current = time;
@@ -57,57 +64,69 @@ const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
             timeRef.current += delta * 0.001;
         }
 
-        const canvas = canvasRef.current;
         const ctx = canvas.getContext('2d');
         const w = width || 1024;
         const h = height || 1024;
 
-        ctx.clearRect(0, 0, w, h);
-        const pattern = ctx.createPattern(img, 'repeat');
-
-        let offsetX = alignX;
-        let offsetY = alignY;
-
-        if (isAnimatingPos) {
-            const sx = animSpeedX ?? 0.1;
-            const sy = animSpeedY ?? 0.1;
-            
-            if (posAnimDirection === 'loop') {
-                offsetX = (alignX + timeRef.current * sx * 100) % 100;
-                offsetY = (alignY + timeRef.current * sy * 100) % 100;
-            } else {
-                // Ping-pong
-                offsetX = alignX + Math.sin(timeRef.current * sx * 5) * 50;
-                offsetY = alignY + Math.cos(timeRef.current * sy * 5) * 50;
+        if (!img) {
+            ctx.clearRect(0, 0, w, h);
+            if (error) {
+                ctx.fillStyle = '#222';
+                ctx.fillRect(0, 0, w, h);
+                ctx.fillStyle = '#444';
+                ctx.font = '20px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Image Load Error', w/2, h/2);
             }
+            if (isAnimatingPos) requestAnimationFrame(render);
+            return;
         }
 
-        const cx = w * (offsetX / 100);
-        const cy = h * (offsetY / 100);
-        
-        const matrix = new DOMMatrix();
-        matrix.translateSelf(cx, cy);
-        matrix.rotateSelf(rotate);
-        
-        // Use baseScale = 1.0 for tiling to prevent "zooming in" on small images
-        const baseScale = 1.0;
-        const finalScale = baseScale * scale;
-        matrix.scaleSelf(finalScale, finalScale);
-        
-        matrix.translateSelf(-img.width / 2, -img.height / 2);
-        pattern.setTransform(matrix);
-        
-        ctx.fillStyle = pattern;
-        ctx.fillRect(0, 0, w, h);
+        ctx.clearRect(0, 0, w, h);
+        try {
+            const pattern = ctx.createPattern(img, 'repeat');
+            if (pattern) {
+                let offsetX = alignX;
+                let offsetY = alignY;
+
+                if (isAnimatingPos) {
+                    const sx = animSpeedX ?? 0.1;
+                    const sy = animSpeedY ?? 0.1;
+                    
+                    if (posAnimDirection === 'loop') {
+                        offsetX = (alignX + timeRef.current * sx * 100) % 100;
+                        offsetY = (alignY + timeRef.current * sy * 100) % 100;
+                    } else {
+                        offsetX = alignX + Math.sin(timeRef.current * sx * 5) * 50;
+                        offsetY = alignY + Math.cos(timeRef.current * sy * 5) * 50;
+                    }
+                }
+
+                const cx = w * (offsetX / 100);
+                const cy = h * (offsetY / 100);
+                
+                const matrix = new DOMMatrix();
+                matrix.translateSelf(cx, cy);
+                matrix.rotateSelf(rotate);
+                matrix.scaleSelf(scale, scale);
+                matrix.translateSelf(-img.width / 2, -img.height / 2);
+                pattern.setTransform(matrix);
+                
+                ctx.fillStyle = pattern;
+                ctx.fillRect(0, 0, w, h);
+            }
+        } catch (e) {
+            console.error("Tiled image render error:", e);
+        }
 
         if (isAnimatingPos) {
             requestAnimationFrame(render);
         }
-    }, [img, scale, rotate, alignX, alignY, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection]);
+    }, [img, error, scale, rotate, alignX, alignY, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection]);
 
     useEffect(() => {
         if (!isAnimatingPos) {
-            render(0);
+            render(performance.now());
         } else {
             lastTimeRef.current = performance.now();
             const animId = requestAnimationFrame(render);
@@ -121,17 +140,20 @@ const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
 const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection, enableAudio }) => {
     const canvasRef = useRef(null);
     const videoRef = useRef(null);
+    const [videoReady, setVideoReady] = useState(false);
     const timeRef = useRef(0);
     const lastTimeRef = useRef(0);
 
     useEffect(() => {
+        setVideoReady(false);
         const v = document.createElement('video');
         v.src = src;
         v.loop = true;
         v.muted = !enableAudio;
         v.playsInline = true;
         v.crossOrigin = "anonymous";
-        v.play().catch(e => console.log("Video play failed:", e));
+        v.oncanplay = () => setVideoReady(true);
+        v.play().catch(e => console.log("Tiled video play failed:", e));
         videoRef.current = v;
         return () => {
             v.pause();
@@ -141,12 +163,9 @@ const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
     }, [src, enableAudio]);
 
     const render = useCallback((time) => {
-        if (!videoRef.current || !canvasRef.current) return;
+        const canvas = canvasRef.current;
+        if (!canvas || !videoRef.current) return;
         const v = videoRef.current;
-        if (v.readyState < 2) {
-            requestAnimationFrame(render);
-            return;
-        }
 
         const delta = time - (lastTimeRef.current || time);
         lastTimeRef.current = time;
@@ -155,10 +174,15 @@ const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
             timeRef.current += delta * 0.001;
         }
 
-        const canvas = canvasRef.current;
         const ctx = canvas.getContext('2d');
         const w = width || 1024;
         const h = height || 1024;
+
+        if (v.readyState < 2 || !videoReady) {
+            ctx.clearRect(0, 0, w, h);
+            requestAnimationFrame(render);
+            return;
+        }
 
         ctx.clearRect(0, 0, w, h);
         try {
@@ -195,7 +219,7 @@ const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
         }
 
         requestAnimationFrame(render);
-    }, [scale, rotate, alignX, alignY, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection]);
+    }, [videoReady, scale, rotate, alignX, alignY, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection]);
 
     useEffect(() => {
         const animId = requestAnimationFrame(render);

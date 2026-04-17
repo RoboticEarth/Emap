@@ -649,13 +649,15 @@ async fn get_fs_preview(req: HttpRequest, query: web::Query<PreviewQuery>) -> im
         };
     }
 
-    // Strictly DO NOT serve original high-res images as previews for server assets OR USB drives
+    // FALLBACK: If no optimized preview exists, serve the original file for images
     let mime = mime_guess::from_path(&path).first_or_octet_stream();
     if mime.type_() == "image" {
-        return HttpResponse::NotFound().finish().customize(); // Trigger "Processing" or "No Preview" in UI
+        return match NamedFile::open_async(path).await {
+            Ok(f) => f.into_response(&req).customize().insert_header(("X-Is-Optimized", "false")),
+            Err(_) => HttpResponse::NotFound().finish().customize()
+        };
     }
 
-    // For non-images (videos etc), we can serve the file icon or original if it's small, but safe bet is 404
     HttpResponse::NotFound().finish().customize()
 }
 

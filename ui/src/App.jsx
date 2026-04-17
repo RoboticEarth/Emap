@@ -960,14 +960,12 @@ const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, hidde
 
     const filteredAssets = useMemo(() => {
         let list = assets;
-        if (!isBrowsingMode) {
-            list = assets.filter(a => a.type === activeTab);
-        }
+        list = assets.filter(a => a.type === activeTab);
         
         if (tagFilter === 'all') return list;
         if (tagFilter === 'untagged') return list.filter(a => !a.tags || a.tags.length === 0);
         return list.filter(a => a.tags && a.tags.includes(tagFilter));
-    }, [assets, activeTab, isBrowsingMode, tagFilter]);
+    }, [assets, activeTab, tagFilter]);
 
     const groupedAssets = useMemo(() => {
         if (!groupByTag) return filteredAssets;
@@ -1516,17 +1514,24 @@ const CustomSelect = ({ value, onChange, options, className = "", buttonClassNam
 const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection }) => {
     const canvasRef = useRef(null);
     const [img, setImg] = useState(null);
+    const [error, setError] = useState(false);
     const timeRef = useRef(0);
     const lastTimeRef = useRef(0);
 
     useEffect(() => {
+        setError(false);
         const i = new Image();
         i.src = src;
         i.onload = () => setImg(i);
+        i.onerror = () => {
+            console.error("Tiled image load failed:", src);
+            setError(true);
+        };
     }, [src]);
 
     const render = useCallback((time) => {
-        if (!img || !canvasRef.current) return;
+        const canvas = canvasRef.current;
+        if (!canvas) return;
         
         const delta = time - (lastTimeRef.current || time);
         lastTimeRef.current = time;
@@ -1535,62 +1540,167 @@ const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
             timeRef.current += delta * 0.001;
         }
 
-        const canvas = canvasRef.current;
         const ctx = canvas.getContext('2d');
         const w = width || 1024;
         const h = height || 1024;
 
-        ctx.clearRect(0, 0, w, h);
-        const pattern = ctx.createPattern(img, 'repeat');
-
-        // Normalize scale: scale=1 should mean the image fills the container (matching 'cover' behavior)
-        const baseScale = Math.max(w / img.width, h / img.height);
-        const finalScale = baseScale * scale;
-
-        let offsetX = alignX;
-        let offsetY = alignY;
-
-        if (isAnimatingPos) {
-            const sx = animSpeedX ?? 0.1;
-            const sy = animSpeedY ?? 0.1;
-            
-            if (posAnimDirection === 'loop') {
-                offsetX = (alignX + timeRef.current * sx * 100) % 100;
-                offsetY = (alignY + timeRef.current * sy * 100) % 100;
-            } else {
-                // Ping-pong
-                offsetX = alignX + Math.sin(timeRef.current * sx * 5) * 50;
-                offsetY = alignY + Math.cos(timeRef.current * sy * 5) * 50;
+        if (!img) {
+            ctx.clearRect(0, 0, w, h);
+            if (error) {
+                ctx.fillStyle = '#222';
+                ctx.fillRect(0, 0, w, h);
+                ctx.fillStyle = '#444';
+                ctx.font = '20px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Image Load Error', w/2, h/2);
             }
+            if (isAnimatingPos) requestAnimationFrame(render);
+            return;
         }
 
-        const cx = w * (offsetX / 100);
-        const cy = h * (offsetY / 100);
-        
-        const matrix = new DOMMatrix();
-        matrix.translateSelf(cx, cy);
-        matrix.rotateSelf(rotate);
-        matrix.scaleSelf(finalScale, finalScale);
-        matrix.translateSelf(-img.width / 2, -img.height / 2);
-        pattern.setTransform(matrix);
-        
-        ctx.fillStyle = pattern;
-        ctx.fillRect(0, 0, w, h);
+        ctx.clearRect(0, 0, w, h);
+        try {
+            const pattern = ctx.createPattern(img, 'repeat');
+            if (pattern) {
+                let offsetX = alignX;
+                let offsetY = alignY;
+
+                if (isAnimatingPos) {
+                    const sx = animSpeedX ?? 0.1;
+                    const sy = animSpeedY ?? 0.1;
+                    
+                    if (posAnimDirection === 'loop') {
+                        offsetX = (alignX + timeRef.current * sx * 100) % 100;
+                        offsetY = (alignY + timeRef.current * sy * 100) % 100;
+                    } else {
+                        offsetX = alignX + Math.sin(timeRef.current * sx * 5) * 50;
+                        offsetY = alignY + Math.cos(timeRef.current * sy * 5) * 50;
+                    }
+                }
+
+                const cx = w * (offsetX / 100);
+                const cy = h * (offsetY / 100);
+                
+                const matrix = new DOMMatrix();
+                matrix.translateSelf(cx, cy);
+                matrix.rotateSelf(rotate);
+                matrix.scaleSelf(scale, scale);
+                matrix.translateSelf(-img.width / 2, -img.height / 2);
+                pattern.setTransform(matrix);
+                
+                ctx.fillStyle = pattern;
+                ctx.fillRect(0, 0, w, h);
+            }
+        } catch (e) {
+            console.error("Tiled image render error:", e);
+        }
 
         if (isAnimatingPos) {
             requestAnimationFrame(render);
         }
-    }, [img, scale, rotate, alignX, alignY, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection]);
+    }, [img, error, scale, rotate, alignX, alignY, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection]);
 
     useEffect(() => {
         if (!isAnimatingPos) {
-            render(0);
+            render(performance.now());
         } else {
             lastTimeRef.current = performance.now();
             const animId = requestAnimationFrame(render);
             return () => cancelAnimationFrame(animId);
         }
     }, [isAnimatingPos, render]);
+
+    return <canvas ref={canvasRef} width={width || 1024} height={height || 1024} style={{ width: '100%', height: '100%', backgroundColor: isLive ? 'black' : 'transparent' }} />;
+};
+
+const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection, enableAudio }) => {
+    const canvasRef = useRef(null);
+    const videoRef = useRef(null);
+    const [videoReady, setVideoReady] = useState(false);
+    const timeRef = useRef(0);
+    const lastTimeRef = useRef(0);
+
+    useEffect(() => {
+        setVideoReady(false);
+        const v = document.createElement('video');
+        v.src = src;
+        v.loop = true;
+        v.muted = !enableAudio;
+        v.playsInline = true;
+        v.crossOrigin = "anonymous";
+        v.oncanplay = () => setVideoReady(true);
+        v.play().catch(e => console.log("Tiled video play failed:", e));
+        videoRef.current = v;
+        return () => {
+            v.pause();
+            v.src = "";
+            v.load();
+        };
+    }, [src, enableAudio]);
+
+    const render = useCallback((time) => {
+        const canvas = canvasRef.current;
+        if (!canvas || !videoRef.current) return;
+        const v = videoRef.current;
+
+        const delta = time - (lastTimeRef.current || time);
+        lastTimeRef.current = time;
+
+        if (isAnimatingPos) {
+            timeRef.current += delta * 0.001;
+        }
+
+        const ctx = canvas.getContext('2d');
+        const w = width || 1024;
+        const h = height || 1024;
+
+        if (v.readyState < 2 || !videoReady) {
+            ctx.clearRect(0, 0, w, h);
+            requestAnimationFrame(render);
+            return;
+        }
+
+        ctx.clearRect(0, 0, w, h);
+        try {
+            const pattern = ctx.createPattern(v, 'repeat');
+            if (pattern) {
+                let offsetX = alignX;
+                let offsetY = alignY;
+
+                if (isAnimatingPos) {
+                    const sx = animSpeedX ?? 0.1;
+                    const sy = animSpeedY ?? 0.1;
+                    if (posAnimDirection === 'loop') {
+                        offsetX = (alignX + timeRef.current * sx * 100) % 100;
+                        offsetY = (alignY + timeRef.current * sy * 100) % 100;
+                    } else {
+                        offsetX = alignX + Math.sin(timeRef.current * sx * 5) * 50;
+                        offsetY = alignY + Math.cos(timeRef.current * sy * 5) * 50;
+                    }
+                }
+
+                const cx = w * (offsetX / 100);
+                const cy = h * (offsetY / 100);
+                const matrix = new DOMMatrix();
+                matrix.translateSelf(cx, cy);
+                matrix.rotateSelf(rotate);
+                matrix.scaleSelf(scale, scale);
+                matrix.translateSelf(-v.videoWidth / 2, -v.videoHeight / 2);
+                pattern.setTransform(matrix);
+                ctx.fillStyle = pattern;
+                ctx.fillRect(0, 0, w, h);
+            }
+        } catch (e) {
+            // Pattern might fail if video not ready
+        }
+
+        requestAnimationFrame(render);
+    }, [videoReady, scale, rotate, alignX, alignY, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection]);
+
+    useEffect(() => {
+        const animId = requestAnimationFrame(render);
+        return () => cancelAnimationFrame(animId);
+    }, [render]);
 
     return <canvas ref={canvasRef} width={width || 1024} height={height || 1024} style={{ width: '100%', height: '100%', backgroundColor: isLive ? 'black' : 'transparent' }} />;
 };
@@ -1628,23 +1738,43 @@ const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLi
         const style = getStyle();
         const isTiling = node.data.tiling ?? false;
 
-        if (isTiling && node.type === 'image' && node.data.value) {
-            return (
-                <TiledImage 
-                    src={node.data.value.split('?')[0]} 
-                    scale={node.data.scale || 1} 
-                    rotate={node.data.rotate || 0}
-                    alignX={node.data.alignX ?? 50}
-                    alignY={node.data.alignY ?? 50}
-                    isLive={isLive}
-                    width={width}
-                    height={height}
-                    isAnimatingPos={node.data.isAnimatingPos}
-                    animSpeedX={node.data.animSpeedX}
-                    animSpeedY={node.data.animSpeedY}
-                    posAnimDirection={node.data.posAnimDirection}
-                />
-            );
+        if (isTiling && node.data.value) {
+            if (node.type === 'image') {
+                return (
+                    <TiledImage 
+                        src={node.data.value.split('?')[0]} 
+                        scale={node.data.scale || 1} 
+                        rotate={node.data.rotate || 0}
+                        alignX={node.data.alignX ?? 50}
+                        alignY={node.data.alignY ?? 50}
+                        isLive={isLive}
+                        width={width}
+                        height={height}
+                        isAnimatingPos={node.data.isAnimatingPos}
+                        animSpeedX={node.data.animSpeedX}
+                        animSpeedY={node.data.animSpeedY}
+                        posAnimDirection={node.data.posAnimDirection}
+                    />
+                );
+            } else if (node.type === 'video') {
+                return (
+                    <TiledVideo 
+                        src={node.data.value.split('?')[0]} 
+                        scale={node.data.scale || 1} 
+                        rotate={node.data.rotate || 0}
+                        alignX={node.data.alignX ?? 50}
+                        alignY={node.data.alignY ?? 50}
+                        isLive={isLive}
+                        width={width}
+                        height={height}
+                        isAnimatingPos={node.data.isAnimatingPos}
+                        animSpeedX={node.data.animSpeedX}
+                        animSpeedY={node.data.animSpeedY}
+                        posAnimDirection={node.data.posAnimDirection}
+                        enableAudio={node.data.enableAudio}
+                    />
+                );
+            }
         }
 
         return (
@@ -3064,6 +3194,7 @@ export default function App() {
     const targetCueId = activeSelection.type === 'cue' ? activeSelection.cueId : activeSelection.prevCueId;
     const currentCueObj = useMemo(() => getCueData(activeSelection.sceneId, targetCueId), [activeSelection, scenes]);
     const currentCueObjRef = useRef(currentCueObj);
+    const prevCueObjRef = useRef(null);
     useEffect(() => { currentCueObjRef.current = currentCueObj; }, [currentCueObj]);
 
     const currentSceneIndex = useMemo(() => scenes.findIndex(s => s.id === activeSelection.sceneId), [scenes, activeSelection.sceneId]);
@@ -3083,17 +3214,22 @@ export default function App() {
     const animateTransition = (time) => {
         if (!startTimeRef.current) startTimeRef.current = time;
         const cue = currentCueObjRef.current;
-        const duration = (cue?.transitionDuration || 0) * 1000;
+        // Default to 1.0s if not specified
+        const duration = (cue?.transitionDuration ?? 1) * 1000;
         const delay = (cue?.transitionDelay || 0) * 1000;
         const totalDuration = duration + delay;
         
         const elapsed = time - startTimeRef.current;
         
-        let mix = 1;
-        if (totalDuration > 0) {
-            if (elapsed < delay) mix = 0;
-            else mix = duration > 0 ? Math.min((elapsed - delay) / duration, 1) : 1;
+        if (totalDuration <= 0) {
+            setTransitionMix(1);
+            setPrevCueState(null);
+            return;
         }
+
+        let mix = 0;
+        if (elapsed < delay) mix = 0;
+        else mix = duration > 0 ? Math.min((elapsed - delay) / duration, 1) : 1;
         
         const ease = cue?.transitionEase || 'linear';
         setTransitionMix(getEase(mix, ease));
@@ -3104,26 +3240,43 @@ export default function App() {
 
     useEffect(() => {
         if (currentCueObj) {
-            let startState = (currentCueState || prevCueState);
-            if (activeSelection.type === 'transition' && activeSelection.prevCueId) {
-                 const prevCue = scenes.find(s => s.id === activeSelection.sceneId)?.cues.find(c => c.id === activeSelection.prevCueId);
-                 if (prevCue) startState = prevCue;
-            } else if (prevCueState && transitionMix < 1) {
-                startState = { 
-                    ...currentCueState, 
-                    nodes: currentCueState.nodes.map(n => {
-                        const prev = prevCueState.nodes?.find(pn => pn.id === n.id);
-                        return prev ? getInterpolatedNode(prev, n, transitionMix) : n;
-                    })
-                };
-            }
+            const isDifferentCue = !prevCueObjRef.current || prevCueObjRef.current.id !== currentCueObj.id;
+            
+            if (isDifferentCue) {
+                const duration = (currentCueObj?.transitionDuration ?? 1) * 1000;
+                const delay = (currentCueObj?.transitionDelay || 0) * 1000;
+                
+                if (prevCueObjRef.current && (duration + delay) > 0) {
+                    let startState = (currentCueState || prevCueState);
+                    if (activeSelection.type === 'transition' && activeSelection.prevCueId) {
+                         const prevCue = scenes.find(s => s.id === activeSelection.sceneId)?.cues.find(c => c.id === activeSelection.prevCueId);
+                         if (prevCue) startState = prevCue;
+                    } else if (prevCueState && transitionMix < 1) {
+                        startState = { 
+                            ...currentCueState, 
+                            nodes: currentCueState.nodes.map(n => {
+                                const prev = prevCueState.nodes?.find(pn => pn.id === n.id);
+                                return prev ? getInterpolatedNode(prev, n, transitionMix) : n;
+                            })
+                        };
+                    }
 
-            setPrevCueState(startState);
-            setCurrentCueState(currentCueObj);
-            setTransitionMix(0); 
-            startTimeRef.current = null;
-            cancelAnimationFrame(requestRef.current);
-            requestRef.current = requestAnimationFrame(animateTransition);
+                    setPrevCueState(startState);
+                    setCurrentCueState(currentCueObj);
+                    setTransitionMix(0); 
+                    startTimeRef.current = null;
+                    cancelAnimationFrame(requestRef.current);
+                    requestRef.current = requestAnimationFrame(animateTransition);
+                } else {
+                    setPrevCueState(null);
+                    setCurrentCueState(currentCueObj);
+                    setTransitionMix(1);
+                }
+            } else {
+                // Same cue, just update data without re-triggering transition
+                setCurrentCueState(currentCueObj);
+            }
+            prevCueObjRef.current = currentCueObj;
         }
         return () => cancelAnimationFrame(requestRef.current);
     }, [targetCueId, activeSelection.sceneId, activeSelection.type, activeSelection.prevCueId]); 
@@ -3133,10 +3286,12 @@ export default function App() {
     const navigateCue = (direction) => {
         let flatList = [];
         scenes.forEach(s => { s.cues.forEach(c => { flatList.push({ sceneId: s.id, cueId: c.id }); }); });
-        const currentIndex = flatList.findIndex(i => i.sceneId === activeSelection.sceneId && i.cueId === targetCueId);
+        const currentIndex = flatList.findIndex(i => i.sceneId === activeSelection.sceneId && (i.cueId === activeSelection.cueId || i.cueId === activeSelection.prevCueId));
         if (currentIndex === -1) return;
         let nextIndex = currentIndex + direction;
-        if (nextIndex >= 0 && nextIndex < flatList.length) { setActiveSelection({ type: 'cue', ...flatList[nextIndex] }); }
+        if (nextIndex >= 0 && nextIndex < flatList.length) { 
+            setActiveSelection({ type: 'cue', ...flatList[nextIndex] }); 
+        }
     };
 
     useEffect(() => {
@@ -3213,7 +3368,7 @@ export default function App() {
     const addScene = () => { 
         const id = Date.now(); 
         const name = `Act ${scenes.length + 1}`;
-        const newScene = {id, name, cues: [{id: id + 1, name: "Cue 1", type: 'standard'}]};
+        const newScene = {id, name, cues: [{id: id + 1, name: "Cue 1", type: 'standard', transitionDuration: 1, transitionEase: 'easeInOut'}]};
         setScenes(p => [...p, newScene]); 
         if (scenes.length === 0) {
             setActiveSelection({ type: 'cue', sceneId: id, cueId: id + 1 });
@@ -3224,7 +3379,7 @@ export default function App() {
             if (s.id !== sId) return s;
             const id = Date.now();
             const name = `Cue ${s.cues.length + 1}`;
-            const updated = {...s, cues: [...s.cues, {id, name, type: 'standard'}]};
+            const updated = {...s, cues: [...s.cues, {id, name, type: 'standard', transitionDuration: 1, transitionEase: 'easeInOut'}]};
             if (activeSelection.cueId === null) {
                 setActiveSelection({ type: 'cue', sceneId: sId, cueId: id });
             }

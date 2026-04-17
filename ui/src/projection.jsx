@@ -28,52 +28,79 @@ function Projection() {
         return s ? s.cues.find(x => x.id === cId) : null;
     }, []);
 
+    const [scale, setScale] = useState(1);
+
+    useEffect(() => {
+        const updateScale = () => {
+            const newScale = window.innerHeight / 1000;
+            setScale(newScale);
+        };
+        window.addEventListener('resize', updateScale);
+        updateScale();
+        return () => window.removeEventListener('resize', updateScale);
+    }, []);
+
     const animateTransition = useCallback((time) => {
         if (!startTimeRef.current) startTimeRef.current = time;
-        const duration = (transitionDetailsRef.current?.transitionDuration || 0) * 1000;
+        // Default to 1.0s if not specified
+        const duration = (transitionDetailsRef.current?.transitionDuration ?? 1) * 1000;
         const delay = (transitionDetailsRef.current?.transitionDelay || 0) * 1000;
         const totalDuration = duration + delay;
         
         const elapsed = time - startTimeRef.current;
         
-        let mix = 1;
-        if (totalDuration > 0) {
-            if (elapsed < delay) mix = 0;
-            else mix = duration > 0 ? Math.min((elapsed - delay) / duration, 1) : 1;
+        if (totalDuration <= 0) {
+            setTransitionMix(1);
+            setPrevCueState(null);
+            return;
         }
+
+        let mix = 0;
+        if (elapsed < delay) mix = 0;
+        else mix = duration > 0 ? Math.min((elapsed - delay) / duration, 1) : 1;
         
         const ease = transitionDetailsRef.current?.transitionEase || 'linear';
         setTransitionMix(getEase(mix, ease));
 
-        if (elapsed < totalDuration) { requestRef.current = requestAnimationFrame(animateTransition); }
-        else { setTransitionMix(1); setPrevCueState(null); }
+        if (elapsed < totalDuration) { 
+            requestRef.current = requestAnimationFrame(animateTransition); 
+        } else { 
+            setTransitionMix(1); 
+            setPrevCueState(null); 
+        }
     }, []);
 
     useEffect(() => {
         if (currentCueObjRef.current) {
-            // Only start transition if previous state was different
-            if (prevCueObjRef.current && JSON.stringify(prevCueObjRef.current) !== JSON.stringify(currentCueObjRef.current)) {
-                setPrevCueState(prevCueObjRef.current); // Save the old cue state
-                setTransitionMix(0); // Start mix from 0 for new transition
-                startTimeRef.current = null;
-                cancelAnimationFrame(requestRef.current);
-                requestRef.current = requestAnimationFrame(animateTransition);
-            } else if (!prevCueObjRef.current) {
-                // No previous state, directly set current (first load)
-                setTransitionMix(1);
-                setPrevCueState(null);
+            // Only start transition if it's a DIFFERENT cue than before
+            const isDifferentCue = !prevCueObjRef.current || prevCueObjRef.current.id !== currentCueObjRef.current.id;
+            
+            if (isDifferentCue) {
+                // Default to 1.0s if not specified
+                const duration = (currentCueObjRef.current?.transitionDuration ?? 1) * 1000;
+                const delay = (currentCueObjRef.current?.transitionDelay || 0) * 1000;
+                
+                if (prevCueObjRef.current && (duration + delay) > 0) {
+                    setPrevCueState(prevCueObjRef.current);
+                    setTransitionMix(0);
+                    startTimeRef.current = null;
+                    cancelAnimationFrame(requestRef.current);
+                    requestRef.current = requestAnimationFrame(animateTransition);
+                } else {
+                    setTransitionMix(1);
+                    setPrevCueState(null);
+                }
             }
-            // Update the previous cue for the next comparison
+            // Update current state and prev cue for comparison
             prevCueObjRef.current = currentCueObjRef.current;
             setCurrentCueState(currentCueObjRef.current);
         } else {
-            // No current cue, clear everything
             setPrevCueState(null);
             setCurrentCueState(null);
             setTransitionMix(1);
             cancelAnimationFrame(requestRef.current);
         }
-    }, [activeSelection, projectData, animateTransition]); // Re-run when activeSelection or projectData changes
+    }, [activeSelection, projectData, animateTransition]);
 
     useEffect(() => {
         const loadAndPollData = async () => {
@@ -130,14 +157,9 @@ function Projection() {
     useEffect(() => {
         if (projectData && activeSelection) {
             const cue = getCueData(projectData.scenes, activeSelection.sceneId, activeSelection.cueId);
-            // If we're starting a transition, keep using the previous cue's transition details!
-            // Wait, we need to know what the previous cue was.
-            if (currentCueObjRef.current && currentCueObjRef.current.id !== cue?.id) {
-                transitionDetailsRef.current = currentCueObjRef.current;
-            } else if (!transitionDetailsRef.current) {
-                transitionDetailsRef.current = cue;
-            }
             
+            // Fix: Use the INCOMING cue for transition settings
+            transitionDetailsRef.current = cue;
             currentCueObjRef.current = cue;
         } else {
             currentCueObjRef.current = null;
@@ -162,17 +184,24 @@ function Projection() {
     const viewMode = uiSync.viewMode;
     
     return (
-        <div className="w-full h-full relative font-sans text-white bg-black">
-            <ProjectionContent 
-                walls={walls} 
-                currentCueState={currentCueState} 
-                prevCueState={prevCueState}
-                transitionMix={transitionMix}
-                viewMode={viewMode}
-                menuTab={uiSync.menuTab}
-                showGuides={uiSync.showGuides}
-                activeWallId={uiSync.activeWallId}
-            />
+        <div className="w-full h-full relative font-sans text-white bg-black overflow-hidden">
+            <div style={{ 
+                transform: `scale(${scale})`, 
+                transformOrigin: '0 0', 
+                width: '100%', 
+                height: '100%' 
+            }}>
+                <ProjectionContent 
+                    walls={walls} 
+                    currentCueState={currentCueState} 
+                    prevCueState={prevCueState}
+                    transitionMix={transitionMix}
+                    viewMode={viewMode}
+                    menuTab={uiSync.menuTab}
+                    showGuides={uiSync.showGuides}
+                    activeWallId={uiSync.activeWallId}
+                />
+            </div>
         </div>
     );
 }
