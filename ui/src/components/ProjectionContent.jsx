@@ -35,7 +35,7 @@ const getInterpolatedNode = (prevNode, currNode, mix) => {
 };
 
 // TiledImage component (copied from App.jsx)
-const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection }) => {
+const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection, fit = 'cover' }) => {
     const canvasRef = useRef(null);
     const [img, setImg] = useState(null);
     const [error, setError] = useState(false);
@@ -86,6 +86,19 @@ const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
         try {
             const pattern = ctx.createPattern(img, 'repeat');
             if (pattern) {
+                // Calculate base scale to match object-fit: cover or contain
+                let baseScale = 1;
+                if (fit === 'cover') {
+                    baseScale = Math.max(w / img.width, h / img.height);
+                } else if (fit === 'contain') {
+                    baseScale = Math.min(w / img.width, h / img.height);
+                } else if (fit === 'fill') {
+                    // Handled differently usually, but for tiling we'll default to cover
+                    baseScale = Math.max(w / img.width, h / img.height);
+                }
+
+                const finalScale = baseScale * scale;
+
                 let offsetX = alignX;
                 let offsetY = alignY;
 
@@ -108,7 +121,7 @@ const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
                 const matrix = new DOMMatrix();
                 matrix.translateSelf(cx, cy);
                 matrix.rotateSelf(rotate);
-                matrix.scaleSelf(scale, scale);
+                matrix.scaleSelf(finalScale, finalScale);
                 matrix.translateSelf(-img.width / 2, -img.height / 2);
                 pattern.setTransform(matrix);
                 
@@ -122,7 +135,7 @@ const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
         if (isAnimatingPos) {
             requestAnimationFrame(render);
         }
-    }, [img, error, scale, rotate, alignX, alignY, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection]);
+    }, [img, error, scale, rotate, alignX, alignY, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection, fit]);
 
     useEffect(() => {
         if (!isAnimatingPos) {
@@ -137,7 +150,7 @@ const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
     return <canvas ref={canvasRef} width={width || 1024} height={height || 1024} style={{ width: '100%', height: '100%', backgroundColor: isLive ? 'black' : 'transparent' }} />;
 };
 
-const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection, enableAudio }) => {
+const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection, enableAudio, fit = 'cover' }) => {
     const canvasRef = useRef(null);
     const videoRef = useRef(null);
     const [videoReady, setVideoReady] = useState(false);
@@ -188,6 +201,18 @@ const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
         try {
             const pattern = ctx.createPattern(v, 'repeat');
             if (pattern) {
+                // Calculate base scale to match object-fit: cover or contain
+                let baseScale = 1;
+                if (fit === 'cover') {
+                    baseScale = Math.max(w / v.videoWidth, h / v.videoHeight);
+                } else if (fit === 'contain') {
+                    baseScale = Math.min(w / v.videoWidth, h / v.videoHeight);
+                } else if (fit === 'fill') {
+                    baseScale = Math.max(w / v.videoWidth, h / v.videoHeight);
+                }
+
+                const finalScale = baseScale * scale;
+
                 let offsetX = alignX;
                 let offsetY = alignY;
 
@@ -208,7 +233,7 @@ const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
                 const matrix = new DOMMatrix();
                 matrix.translateSelf(cx, cy);
                 matrix.rotateSelf(rotate);
-                matrix.scaleSelf(scale, scale);
+                matrix.scaleSelf(finalScale, finalScale);
                 matrix.translateSelf(-v.videoWidth / 2, -v.videoHeight / 2);
                 pattern.setTransform(matrix);
                 ctx.fillStyle = pattern;
@@ -219,7 +244,7 @@ const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
         }
 
         requestAnimationFrame(render);
-    }, [videoReady, scale, rotate, alignX, alignY, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection]);
+    }, [videoReady, scale, rotate, alignX, alignY, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection, fit]);
 
     useEffect(() => {
         const animId = requestAnimationFrame(render);
@@ -357,6 +382,7 @@ const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLi
                         animSpeedX={node.data.animSpeedX}
                         animSpeedY={node.data.animSpeedY}
                         posAnimDirection={node.data.posAnimDirection}
+                        fit={node.data.fit || 'cover'}
                     />
                 );
             } else if (node.type === 'video') {
@@ -375,6 +401,7 @@ const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLi
                         animSpeedY={node.data.animSpeedY}
                         posAnimDirection={node.data.posAnimDirection}
                         enableAudio={node.data.enableAudio}
+                        fit={node.data.fit || 'cover'}
                     />
                 );
             }
