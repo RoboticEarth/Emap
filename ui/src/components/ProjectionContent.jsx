@@ -150,7 +150,7 @@ const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
     return <canvas ref={canvasRef} width={width || 1024} height={height || 1024} style={{ width: '100%', height: '100%', backgroundColor: isLive ? 'black' : 'transparent' }} />;
 };
 
-const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection, enableAudio, fit = 'cover' }) => {
+const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection, enableAudio, fit = 'cover', isMuted }) => {
     const canvasRef = useRef(null);
     const videoRef = useRef(null);
     const [videoReady, setVideoReady] = useState(false);
@@ -162,7 +162,7 @@ const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
         const v = document.createElement('video');
         v.src = src;
         v.loop = true;
-        v.muted = !enableAudio;
+        v.muted = isMuted || !enableAudio;
         v.playsInline = true;
         v.crossOrigin = "anonymous";
         v.oncanplay = () => setVideoReady(true);
@@ -333,7 +333,7 @@ const NoiseCanvas = ({ type = 'perlin', scale = 5, detail = 4, time = 0, distort
 };
 
 // RenderNode component (updated for tiling)
-const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLive, isTransitioning }) => {
+const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLive, isTransitioning, isMuted }) => {
     const node = nodes.find(n => n.id === nodeId);
     if (!node) return null;
 
@@ -364,7 +364,8 @@ const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLi
 
     if (node.type === 'image' || node.type === 'video') {
         const style = getStyle();
-        const isTiling = node.data.tiling ?? false;
+        // Disable tiling for videos as requested
+        const isTiling = node.type === 'video' ? false : (node.data.tiling ?? false);
 
         if (isTiling && node.data.value) {
             if (node.type === 'image') {
@@ -417,7 +418,7 @@ const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLi
                         style={{...style, objectFit: isTiling ? 'none' : (node.data.fit || 'cover')}} 
                         autoPlay 
                         loop 
-                        muted={!(node.data.enableAudio ?? false)} 
+                        muted={isMuted || !(node.data.enableAudio ?? false)} 
                         playsInline 
                         crossOrigin="anonymous" 
                     />
@@ -445,7 +446,7 @@ const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLi
         return (
             <div style={{position: 'relative', width: '100%', height: '100%'}}>
                 <div style={{position: 'absolute', inset: 0}}>
-                    {baseConn && <RenderNode nodeId={baseConn.from} nodes={nodes} connections={connections} width={width} height={height} wallColor={wallColor} isLive={isLive} isTransitioning={isTransitioning} />}
+                    {baseConn && <RenderNode nodeId={baseConn.from} nodes={nodes} connections={connections} width={width} height={height} wallColor={wallColor} isLive={isLive} isTransitioning={isTransitioning} isMuted={isMuted} />}
                 </div>
                 {blendConn && (
                     <div style={{
@@ -453,7 +454,7 @@ const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLi
                         inset: 0, 
                         mixBlendMode: node.data.blendMode || 'normal'
                     }}>
-                         <RenderNode nodeId={blendConn.from} nodes={nodes} connections={connections} width={width} height={height} wallColor={wallColor} isLive={isLive} isTransitioning={isTransitioning} />
+                         <RenderNode nodeId={blendConn.from} nodes={nodes} connections={connections} width={width} height={height} wallColor={wallColor} isLive={isLive} isTransitioning={isTransitioning} isMuted={isMuted} />
                     </div>
                 )}
             </div>
@@ -465,7 +466,7 @@ const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLi
 
 
 // TransitioningProjectedContent component
-const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, walls, isLive, viewportPan, viewportZoom }) => {
+const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, walls, isLive, viewportPan, viewportZoom, isMuted }) => {
     const getRootNodeId = (state, wallId) => {
         if (!state || !state.nodes) return null;
         const out = state.nodes.find(n => n.type === 'output' && n.data.wallId === wallId);
@@ -509,6 +510,7 @@ const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, wal
                             wallColor={wall.color} 
                             isLive={isLive} 
                             isTransitioning={isTransitioning} 
+                            isMuted={isMuted}
                         />
                     );
                 }
@@ -519,7 +521,7 @@ const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, wal
                     <div key={wall.id} className="absolute left-0 top-0 origin-top-left will-change-transform" style={{ width: `${width}px`, height: `${height}px`, transform: cssM, overflow: 'hidden' }}>
                         {isTransitioning && !isSameNode && prevRootId && (
                             <div key={prevRootId} style={{ opacity: 1 - mix, position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
-                                        <RenderNode nodeId={prevRootId} nodes={prevCueState.nodes} connections={prevCueState.connections} width={width} height={height} wallColor={wall.color} isLive={isLive} isTransitioning={isTransitioning} />
+                                        <RenderNode nodeId={prevRootId} nodes={prevCueState.nodes} connections={prevCueState.connections} width={width} height={height} wallColor={wall.color} isLive={isLive} isTransitioning={isTransitioning} isMuted={isMuted} />
                             </div>
                         )}
                         {currentNodeToRender && (
@@ -587,7 +589,7 @@ const WarpedTextureGrid = ({ wallPoints }) => {
 };
 
 // Main ProjectionContent Component
-export const ProjectionContent = ({ walls, currentCueState, prevCueState, transitionMix, viewMode, menuTab, showGuides, activeWallId, viewportPan, viewportZoom }) => {
+export const ProjectionContent = ({ walls, currentCueState, prevCueState, transitionMix, viewMode, menuTab, showGuides, activeWallId, viewportPan, viewportZoom, isMuted }) => {
     const isLive = viewMode === 'live';
     const isTransitioning = transitionMix < 1;
     const transform = viewportPan && viewportZoom ? `translate(${viewportPan.x}px, ${viewportPan.y}px) scale(${viewportZoom})` : 'none';
@@ -595,7 +597,7 @@ export const ProjectionContent = ({ walls, currentCueState, prevCueState, transi
     return (
         <div className="absolute inset-0 h-full z-0 bg-black">
             <WallBackgroundLayer walls={walls} currentCueState={currentCueState} isLive={isLive} isTransitioning={isTransitioning} shouldShow={menuTab === 'scenes'} viewportPan={viewportPan} viewportZoom={viewportZoom} />
-            <TransitioningProjectedContent prevCueState={prevCueState} currentCueState={currentCueState} mix={transitionMix} walls={walls} isLive={isLive} viewportPan={viewportPan} viewportZoom={viewportZoom} />
+            <TransitioningProjectedContent prevCueState={prevCueState} currentCueState={currentCueState} mix={transitionMix} walls={walls} isLive={isLive} viewportPan={viewportPan} viewportZoom={viewportZoom} isMuted={isMuted} />
             
             {/* SVG Overlay for Mapping Geometry */}
             <svg className="absolute inset-0 w-full h-full pointer-events-none">

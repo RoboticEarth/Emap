@@ -891,13 +891,13 @@ const FileExplorer = ({ isOpen, onClose, onImport, showConfirm, showAlert, hidde
     );
 };
 
-const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, hiddenDrives, setHiddenDrives, lowResourceMode, initialTab = 'image' }) => {
+const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, hiddenDrives, setHiddenDrives, lowResourceMode, initialTab = 'image', showExplorer = false }) => {
 
     const [activeTab, setActiveTab] = useState(initialTab);
 
     const [assets, setAssets] = useState([]);
 
-    const [showFileExplorer, setShowFileExplorer] = useState(false);
+    const [showFileExplorer, setShowFileExplorer] = useState(showExplorer);
 
     // Tagging and Filtering State
     const [allUniqueTags, setAllUniqueTags] = useState([]);
@@ -911,10 +911,11 @@ const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, hidde
     useEffect(() => {
         if (isOpen) {
             setActiveTab(isBrowsingMode ? 'image' : initialTab);
+            setShowFileExplorer(showExplorer);
             loadAssets();
             loadAllTags();
         }
-    }, [isOpen, initialTab, isBrowsingMode]);
+    }, [isOpen, initialTab, isBrowsingMode, showExplorer]);
 
     const loadAllTags = async () => {
         const tags = await db.getAllUniqueTags();
@@ -1107,20 +1108,15 @@ const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, hidde
                                                 </span>
                                             </div>
                                         </div>
-                                    ) : item.type === 'video' ? (
-                                        <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-800">
-                                            <Video size={48} className="text-zinc-600 mb-2" />
-                                            <span className="text-[10px] text-zinc-500 font-bold uppercase">Video Asset</span>
-                                        </div>
                                     ) : (
                                         <img 
-                                            src={item.url + (lowResourceMode ? "?thumb=1" : "")} 
+                                            src={item.url + (lowResourceMode ? "&thumb=1" : "")} 
                                             className="w-full h-full object-cover" 
                                             loading="lazy" 
                                             alt="" 
                                             onError={(e) => {
                                                 // If thumbnail fails or doesn't exist, try original
-                                                if (e.target.src.includes("?thumb=1")) {
+                                                if (e.target.src.includes("&thumb=1")) {
                                                     e.target.src = item.url;
                                                 }
                                             }}
@@ -1625,7 +1621,7 @@ const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
     return <canvas ref={canvasRef} width={width || 1024} height={height || 1024} style={{ width: '100%', height: '100%', backgroundColor: isLive ? 'black' : 'transparent' }} />;
 };
 
-const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection, enableAudio, fit = 'cover' }) => {
+const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection, enableAudio, fit = 'cover', isMuted }) => {
     const canvasRef = useRef(null);
     const videoRef = useRef(null);
     const [videoReady, setVideoReady] = useState(false);
@@ -1637,7 +1633,7 @@ const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
         const v = document.createElement('video');
         v.src = src;
         v.loop = true;
-        v.muted = !enableAudio;
+        v.muted = isMuted || !enableAudio;
         v.playsInline = true;
         v.crossOrigin = "anonymous";
         v.oncanplay = () => setVideoReady(true);
@@ -1729,7 +1725,7 @@ const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
     return <canvas ref={canvasRef} width={width || 1024} height={height || 1024} style={{ width: '100%', height: '100%', backgroundColor: isLive ? 'black' : 'transparent' }} />;
 };
 
-const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLive, isTransitioning }) => {
+const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLive, isTransitioning, isMuted = true }) => {
     const node = nodes.find(n => n.id === nodeId);
     if (!node) return null;
 
@@ -1760,7 +1756,7 @@ const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLi
 
     if (node.type === 'image' || node.type === 'video') {
         const style = getStyle();
-        const isTiling = node.data.tiling ?? false;
+        const isTiling = node.type === 'video' ? false : (node.data.tiling ?? false);
 
         if (isTiling && node.data.value) {
             if (node.type === 'image') {
@@ -1813,7 +1809,7 @@ const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLi
                         style={{...style, objectFit: isTiling ? 'none' : (node.data.fit || 'cover')}} 
                         autoPlay 
                         loop 
-                        muted={!(node.data.enableAudio ?? false)} 
+                        muted={isMuted || !(node.data.enableAudio ?? false)} 
                         playsInline 
                         crossOrigin="anonymous" 
                     />
@@ -1877,7 +1873,7 @@ const getInterpolatedNode = (prevNode, currNode, mix) => {
     return { ...currNode, data: newData };
 };
 
-const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, walls, isLive, viewportPan, viewportZoom }) => {
+const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, walls, isLive, viewportPan, viewportZoom, isMuted = true }) => {
     const getRootNodeId = (state, wallId) => {
         if (!state || !state.nodes) return null;
         const out = state.nodes.find(n => n.type === 'output' && n.data.wallId === wallId);
@@ -1921,6 +1917,7 @@ const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, wal
                             wallColor={wall.color} 
                             isLive={isLive} 
                             isTransitioning={isTransitioning} 
+                            isMuted={isMuted}
                         />
                     );
                 }
@@ -1931,7 +1928,7 @@ const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, wal
                     <div key={wall.id} className="absolute left-0 top-0 origin-top-left will-change-transform" style={{ width: `${width}px`, height: `${height}px`, transform: cssM, overflow: 'hidden' }}>
                         {isTransitioning && !isSameNode && prevRootId && (
                             <div key={prevRootId} style={{ opacity: 1 - mix, position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
-                                        <RenderNode nodeId={prevRootId} nodes={prevCueState.nodes} connections={prevCueState.connections} width={width} height={height} wallColor={wall.color} isLive={isLive} isTransitioning={isTransitioning} />
+                                        <RenderNode nodeId={prevRootId} nodes={prevCueState.nodes} connections={prevCueState.connections} width={width} height={height} wallColor={wall.color} isLive={isLive} isTransitioning={isTransitioning} isMuted={isMuted} />
                             </div>
                         )}
                         {currentNodeToRender && (
@@ -3832,6 +3829,7 @@ export default function App() {
                                     onClose={() => setAssetBrowserState({isOpen:false})}
                                     onSelect={(a) => {assetBrowserState.callback(a); setAssetBrowserState({isOpen:false})}}
                                     initialTab={assetBrowserState.type}
+                                    showExplorer={assetBrowserState.showExplorer}
                                     showConfirm={showConfirm}
                                     showAlert={showAlert}
                                     hiddenDrives={hiddenDrives}
@@ -3860,7 +3858,7 @@ export default function App() {
                                     </div>
                                     {usbDrives.filter(d => !hiddenDrives.includes(d.path)).length > 0 && (
                                         <button 
-                                            onClick={() => setAssetBrowserState({ isOpen: true, type: 'image', callback: () => {} })}
+                                            onClick={() => setAssetBrowserState({ isOpen: true, type: 'all', showExplorer: true, callback: () => {} })}
                                             className="bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-2 animate-bounce-subtle shadow-lg shadow-orange-900/40 pointer-events-auto"
                                         >
                                             <Cable size={16} /> USB DETECTED ({usbDrives.filter(d => !hiddenDrives.includes(d.path)).length})
@@ -3900,7 +3898,7 @@ export default function App() {
                                     
                                     {usbDrives.filter(d => !hiddenDrives.includes(d.path)).length > 0 && (
                                         <button 
-                                            onClick={() => setAssetBrowserState({ isOpen: true, type: 'image', callback: () => {} })}
+                                            onClick={() => setAssetBrowserState({ isOpen: true, type: 'all', showExplorer: true, callback: () => {} })}
                                             className="bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-2 animate-bounce-subtle shadow-lg shadow-orange-900/40 pointer-events-auto"
                                         >
                                             <Cable size={16} /> USB DETECTED ({usbDrives.filter(d => !hiddenDrives.includes(d.path)).length})

@@ -29,11 +29,18 @@ function Projection() {
     }, []);
 
     const [scale, setScale] = useState(1);
+    const [isMuted, setIsMuted] = useState(false);
 
     useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('mute') === '1') {
+            setIsMuted(true);
+        }
+
         const updateScale = () => {
-            const newScale = window.innerHeight / 1000;
-            setScale(newScale);
+            const scaleH = window.innerHeight / 1000;
+            const scaleW = window.innerWidth / 1777.7;
+            setScale(Math.min(scaleH, scaleW));
         };
         window.addEventListener('resize', updateScale);
         updateScale();
@@ -186,10 +193,13 @@ function Projection() {
     return (
         <div className="w-full h-full relative font-sans text-white bg-black overflow-hidden">
             <div style={{ 
-                transform: `scale(${scale})`, 
-                transformOrigin: '0 0', 
-                width: '100%', 
-                height: '100%' 
+                transform: `translate(-50%, -50%) scale(${scale})`, 
+                transformOrigin: 'center center', 
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                width: '1777.7px', 
+                height: '1000px' 
             }}>
                 <ProjectionContent 
                     walls={walls} 
@@ -200,6 +210,7 @@ function Projection() {
                     menuTab={uiSync.menuTab}
                     showGuides={uiSync.showGuides}
                     activeWallId={uiSync.activeWallId}
+                    isMuted={isMuted}
                 />
             </div>
         </div>

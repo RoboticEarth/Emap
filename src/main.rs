@@ -606,14 +606,20 @@ async fn process_image_asset(query: web::Query<ProcessQuery>) -> impl Responder 
         if !src.exists() { return Err("Not found"); }
         
         let mime_type = mime_guess::from_path(&src).first_or_octet_stream().to_string();
-        if mime_type.starts_with("image/") && !mime_type.contains("svg") {
+        if (mime_type.starts_with("image/") && !mime_type.contains("svg")) || mime_type.starts_with("video/") {
             let base_name = src.file_stem().unwrap_or_default().to_string_lossy().to_string();
             let ext = src.extension().unwrap_or_default().to_string_lossy().to_string();
-            let p1080 = previews_dir.join(format!("{}_1080p.{}", base_name, ext));
-            let p720 = previews_dir.join(format!("{}_720p.{}", base_name, ext));
+            let p1080 = previews_dir.join(format!("{}_1080p.{}", base_name, if mime_type.starts_with("video/") { "jpg" } else { &ext }));
+            let p720 = previews_dir.join(format!("{}_720p.{}", base_name, if mime_type.starts_with("video/") { "jpg" } else { &ext }));
             
-            let _ = std::process::Command::new("magick").arg(&src).arg("-resize").arg("1920x1080>").arg(&p1080).output();
-            let _ = std::process::Command::new("magick").arg(&src).arg("-resize").arg("1280x720>").arg(&p720).output();
+            if mime_type.starts_with("image/") {
+                let _ = std::process::Command::new("magick").arg(&src).arg("-resize").arg("1920x1080>").arg(&p1080).output();
+                let _ = std::process::Command::new("magick").arg(&src).arg("-resize").arg("1280x720>").arg(&p720).output();
+            } else {
+                // Video preview using ffmpeg
+                let _ = std::process::Command::new("ffmpeg").arg("-i").arg(&src).arg("-ss").arg("00:00:01").arg("-vframes").arg("1").arg("-vf").arg("scale=1920:1080:force_original_aspect_ratio=decrease").arg("-y").arg(&p1080).output();
+                let _ = std::process::Command::new("ffmpeg").arg("-i").arg(&src).arg("-ss").arg("00:00:01").arg("-vframes").arg("1").arg("-vf").arg("scale=1280:720:force_original_aspect_ratio=decrease").arg("-y").arg(&p720).output();
+            }
         }
         Ok(())
     }).await;
@@ -633,11 +639,11 @@ async fn get_fs_preview(req: HttpRequest, query: web::Query<PreviewQuery>) -> im
     let run_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let assets_dir = run_dir.join("assets");
     
-    // Check if it's a server asset (in the assets folder)
-    let _is_server_asset = path.starts_with(&assets_dir);
+    let mime = mime_guess::from_path(&path).first_or_octet_stream();
+    let is_video = mime.to_string().starts_with("video/");
     
-    let p1080 = assets_dir.join(".previews").join(format!("{}_1080p.{}", base_name, ext));
-    let p720 = assets_dir.join(".previews").join(format!("{}_720p.{}", base_name, ext));
+    let p1080 = assets_dir.join(".previews").join(format!("{}_1080p.{}", base_name, if is_video { "jpg" } else { &ext }));
+    let p720 = assets_dir.join(".previews").join(format!("{}_720p.{}", base_name, if is_video { "jpg" } else { &ext }));
     
     let is_low_res = req.query_string().contains("res=720");
     let target_preview = if is_low_res { p720 } else { p1080 };
@@ -650,7 +656,6 @@ async fn get_fs_preview(req: HttpRequest, query: web::Query<PreviewQuery>) -> im
     }
 
     // FALLBACK: If no optimized preview exists, serve the original file for images
-    let mime = mime_guess::from_path(&path).first_or_octet_stream();
     if mime.type_() == "image" {
         return match NamedFile::open_async(path).await {
             Ok(f) => f.into_response(&req).customize().insert_header(("X-Is-Optimized", "false")),
@@ -762,20 +767,30 @@ async fn import_asset(data: web::Data<AppState>, req: web::Json<ImportRequest>) 
             params![asset_id, name, req_path, mime_type]
         ).map_err(|e| e.to_string())?;
         
-        if mime_type.starts_with("image/") && !mime_type.contains("svg") {
+        if (mime_type.starts_with("image/") && !mime_type.contains("svg")) || mime_type.starts_with("video/") {
             let run_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             let previews_dir = run_dir.join("assets").join(".previews");
             let _ = fs::create_dir_all(&previews_dir);
             let base_name = src.file_stem().unwrap_or_default().to_string_lossy().to_string();
             let ext = src.extension().unwrap_or_default().to_string_lossy().to_string();
-            let p1080 = previews_dir.join(format!("{}_1080p.{}", base_name, ext));
-            let p720 = previews_dir.join(format!("{}_720p.{}", base_name, ext));
+            let p1080 = previews_dir.join(format!("{}_1080p.{}", base_name, if mime_type.starts_with("video/") { "jpg" } else { &ext }));
+            let p720 = previews_dir.join(format!("{}_720p.{}", base_name, if mime_type.starts_with("video/") { "jpg" } else { &ext }));
             
-            if !p1080.exists() || overwrite {
-                let _ = std::process::Command::new("magick").arg(&src).arg("-resize").arg("1920x1080>").arg(&p1080).output();
-            }
-            if !p720.exists() || overwrite {
-                let _ = std::process::Command::new("magick").arg(&src).arg("-resize").arg("1280x720>").arg(&p720).output();
+            if mime_type.starts_with("image/") {
+                if !p1080.exists() || overwrite {
+                    let _ = std::process::Command::new("magick").arg(&src).arg("-resize").arg("1920x1080>").arg(&p1080).output();
+                }
+                if !p720.exists() || overwrite {
+                    let _ = std::process::Command::new("magick").arg(&src).arg("-resize").arg("1280x720>").arg(&p720).output();
+                }
+            } else {
+                // Video preview using ffmpeg
+                if !p1080.exists() || overwrite {
+                    let _ = std::process::Command::new("ffmpeg").arg("-i").arg(&src).arg("-ss").arg("00:00:01").arg("-vframes").arg("1").arg("-vf").arg("scale=1920:1080:force_original_aspect_ratio=decrease").arg("-y").arg(&p1080).output();
+                }
+                if !p720.exists() || overwrite {
+                    let _ = std::process::Command::new("ffmpeg").arg("-i").arg(&src).arg("-ss").arg("00:00:01").arg("-vframes").arg("1").arg("-vf").arg("scale=1280:720:force_original_aspect_ratio=decrease").arg("-y").arg(&p720).output();
+                }
             }
         }
         
@@ -1169,7 +1184,8 @@ fn main() {
 
                     WebEngineView {
                         anchors.fill: parent
-                        url: "http://127.0.0.1:8080/?screen=" + encodeURIComponent(modelData.name)
+                        // Only the first projection screen (index 0) gets audio. Others are muted.
+                        url: "http://127.0.0.1:8080/?screen=" + encodeURIComponent(modelData.name) + (index > 0 ? "&mute=1" : "")
                         
                         settings.pluginsEnabled: true
                         settings.playbackRequiresUserGesture: false
