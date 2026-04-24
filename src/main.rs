@@ -93,6 +93,7 @@ struct SyncResponse {
     active_selection: Option<serde_json::Value>,
     ui_sync: Option<serde_json::Value>,
     monitor_config: Option<AppConfig>,
+    discovered_monitors: Vec<MonitorInfo>,
 }
 
 #[get("/api/sync")]
@@ -130,11 +131,17 @@ async fn sync_all(data: web::Data<AppState>) -> impl Responder {
         config.clone()
     };
 
+    let discovered_monitors = {
+        let monitors = data.discovered_monitors.lock().unwrap();
+        monitors.clone()
+    };
+
     HttpResponse::Ok().json(SyncResponse {
         project_data,
         active_selection,
         ui_sync,
         monitor_config,
+        discovered_monitors,
     })
 }
 

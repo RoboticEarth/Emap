@@ -34,17 +34,19 @@ const getInterpolatedNode = (prevNode, currNode, mix) => {
     return { ...currNode, data: newData };
 };
 
-// TiledImage component (copied from App.jsx)
+// TiledImage component
 const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection, fit = 'cover' }) => {
     const canvasRef = useRef(null);
     const [img, setImg] = useState(null);
     const [error, setError] = useState(false);
     const timeRef = useRef(0);
     const lastTimeRef = useRef(0);
+    const animIdRef = useRef(null);
 
     useEffect(() => {
         setError(false);
         const i = new Image();
+        i.crossOrigin = "anonymous";
         i.src = src;
         i.onload = () => setImg(i);
         i.onerror = () => {
@@ -78,7 +80,6 @@ const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
                 ctx.textAlign = 'center';
                 ctx.fillText('Image Load Error', w/2, h/2);
             }
-            if (isAnimatingPos) requestAnimationFrame(render);
             return;
         }
 
@@ -86,18 +87,16 @@ const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
         try {
             const pattern = ctx.createPattern(img, 'repeat');
             if (pattern) {
-                // Calculate base scale to match object-fit: cover or contain
                 let baseScale = 1;
                 if (fit === 'cover') {
                     baseScale = Math.max(w / img.width, h / img.height);
                 } else if (fit === 'contain') {
                     baseScale = Math.min(w / img.width, h / img.height);
-                } else if (fit === 'fill') {
-                    // Handled differently usually, but for tiling we'll default to cover
+                } else {
                     baseScale = Math.max(w / img.width, h / img.height);
                 }
 
-                const finalScale = baseScale * scale;
+                const finalScale = Math.max(0.0001, baseScale * scale);
 
                 let offsetX = alignX;
                 let offsetY = alignY;
@@ -131,20 +130,26 @@ const TiledImage = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
         } catch (e) {
             console.error("Tiled image render error:", e);
         }
-
-        if (isAnimatingPos) {
-            requestAnimationFrame(render);
-        }
     }, [img, error, scale, rotate, alignX, alignY, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection, fit]);
 
     useEffect(() => {
-        if (!isAnimatingPos) {
-            render(performance.now());
-        } else {
+        const loop = (time) => {
+            render(time);
+            if (isAnimatingPos) {
+                animIdRef.current = requestAnimationFrame(loop);
+            }
+        };
+
+        if (isAnimatingPos) {
             lastTimeRef.current = performance.now();
-            const animId = requestAnimationFrame(render);
-            return () => cancelAnimationFrame(animId);
+            animIdRef.current = requestAnimationFrame(loop);
+        } else {
+            render(performance.now());
         }
+
+        return () => {
+            if (animIdRef.current) cancelAnimationFrame(animIdRef.current);
+        };
     }, [isAnimatingPos, render]);
 
     return <canvas ref={canvasRef} width={width || 1024} height={height || 1024} style={{ width: '100%', height: '100%', backgroundColor: isLive ? 'black' : 'transparent' }} />;
@@ -156,6 +161,7 @@ const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
     const [videoReady, setVideoReady] = useState(false);
     const timeRef = useRef(0);
     const lastTimeRef = useRef(0);
+    const animIdRef = useRef(null);
 
     useEffect(() => {
         setVideoReady(false);
@@ -172,8 +178,9 @@ const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
             v.pause();
             v.src = "";
             v.load();
+            if (animIdRef.current) cancelAnimationFrame(animIdRef.current);
         };
-    }, [src, enableAudio]);
+    }, [src, enableAudio, isMuted]);
 
     const render = useCallback((time) => {
         const canvas = canvasRef.current;
@@ -193,7 +200,6 @@ const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
 
         if (v.readyState < 2 || !videoReady) {
             ctx.clearRect(0, 0, w, h);
-            requestAnimationFrame(render);
             return;
         }
 
@@ -201,17 +207,16 @@ const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
         try {
             const pattern = ctx.createPattern(v, 'repeat');
             if (pattern) {
-                // Calculate base scale to match object-fit: cover or contain
                 let baseScale = 1;
                 if (fit === 'cover') {
                     baseScale = Math.max(w / v.videoWidth, h / v.videoHeight);
                 } else if (fit === 'contain') {
                     baseScale = Math.min(w / v.videoWidth, h / v.videoHeight);
-                } else if (fit === 'fill') {
+                } else {
                     baseScale = Math.max(w / v.videoWidth, h / v.videoHeight);
                 }
 
-                const finalScale = baseScale * scale;
+                const finalScale = Math.max(0.0001, baseScale * scale);
 
                 let offsetX = alignX;
                 let offsetY = alignY;
@@ -242,13 +247,17 @@ const TiledVideo = ({ src, scale, rotate, alignX, alignY, isLive, width, height,
         } catch (e) {
             // Pattern might fail if video not ready
         }
-
-        requestAnimationFrame(render);
     }, [videoReady, scale, rotate, alignX, alignY, width, height, isAnimatingPos, animSpeedX, animSpeedY, posAnimDirection, fit]);
 
     useEffect(() => {
-        const animId = requestAnimationFrame(render);
-        return () => cancelAnimationFrame(animId);
+        const loop = (time) => {
+            render(time);
+            animIdRef.current = requestAnimationFrame(loop);
+        };
+        animIdRef.current = requestAnimationFrame(loop);
+        return () => {
+            if (animIdRef.current) cancelAnimationFrame(animIdRef.current);
+        };
     }, [render]);
 
     return <canvas ref={canvasRef} width={width || 1024} height={height || 1024} style={{ width: '100%', height: '100%', backgroundColor: isLive ? 'black' : 'transparent' }} />;

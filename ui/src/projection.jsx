@@ -31,83 +31,48 @@ function Projection() {
     const [scale, setScale] = useState(1);
     const [isMuted, setIsMuted] = useState(false);
 
+    const [monitors, setMonitors] = useState([]);
+    const [screenName, setScreenName] = useState(null);
+    const [stageSize, setStageSize] = useState({ w: 1777.7, h: 1000 });
+
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
         if (params.get('mute') === '1') {
             setIsMuted(true);
         }
+        setScreenName(params.get('screen'));
 
         const updateScale = () => {
-            const scaleH = window.innerHeight / 1000;
-            const scaleW = window.innerWidth / 1777.7;
-            setScale(Math.min(scaleH, scaleW));
+            setStageSize(prev => {
+                const scaleH = window.innerHeight / prev.h;
+                const scaleW = window.innerWidth / prev.w;
+                setScale(Math.min(scaleH, scaleW));
+                return prev;
+            });
         };
         window.addEventListener('resize', updateScale);
         updateScale();
         return () => window.removeEventListener('resize', updateScale);
     }, []);
 
-    const animateTransition = useCallback((time) => {
-        if (!startTimeRef.current) startTimeRef.current = time;
-        // Default to 1.0s if not specified
-        const duration = (transitionDetailsRef.current?.transitionDuration ?? 1) * 1000;
-        const delay = (transitionDetailsRef.current?.transitionDelay || 0) * 1000;
-        const totalDuration = duration + delay;
-        
-        const elapsed = time - startTimeRef.current;
-        
-        if (totalDuration <= 0) {
-            setTransitionMix(1);
-            setPrevCueState(null);
-            return;
-        }
-
-        let mix = 0;
-        if (elapsed < delay) mix = 0;
-        else mix = duration > 0 ? Math.min((elapsed - delay) / duration, 1) : 1;
-        
-        const ease = transitionDetailsRef.current?.transitionEase || 'linear';
-        setTransitionMix(getEase(mix, ease));
-
-        if (elapsed < totalDuration) { 
-            requestRef.current = requestAnimationFrame(animateTransition); 
-        } else { 
-            setTransitionMix(1); 
-            setPrevCueState(null); 
-        }
-    }, []);
-
     useEffect(() => {
-        if (currentCueObjRef.current) {
-            // Only start transition if it's a DIFFERENT cue than before
-            const isDifferentCue = !prevCueObjRef.current || prevCueObjRef.current.id !== currentCueObjRef.current.id;
-            
-            if (isDifferentCue) {
-                // Default to 1.0s if not specified
-                const duration = (currentCueObjRef.current?.transitionDuration ?? 1) * 1000;
-                const delay = (currentCueObjRef.current?.transitionDelay || 0) * 1000;
+        if (screenName && monitors.length > 0) {
+            const currentMonitor = monitors.find(m => m.name === screenName);
+            if (currentMonitor) {
+                const ar = currentMonitor.width / currentMonitor.height;
+                const newW = 1000 * ar;
+                setStageSize({ w: newW, h: 1000 });
                 
-                if (prevCueObjRef.current && (duration + delay) > 0) {
-                    setPrevCueState(prevCueObjRef.current);
-                    setTransitionMix(0);
-                    startTimeRef.current = null;
-                    cancelAnimationFrame(requestRef.current);
-                    requestRef.current = requestAnimationFrame(animateTransition);
-                } else {
-                    setTransitionMix(1);
-                    setPrevCueState(null);
-                }
+                // Update scale immediately with new stage size
+                const scaleH = window.innerHeight / 1000;
+                const scaleW = window.innerWidth / newW;
+                setScale(Math.min(scaleH, scaleW));
             }
-            // Update current state and prev cue for comparison
-            prevCueObjRef.current = currentCueObjRef.current;
-            setCurrentCueState(currentCueObjRef.current);
-        } else {
-            setPrevCueState(null);
-            setCurrentCueState(null);
-            setTransitionMix(1);
-            cancelAnimationFrame(requestRef.current);
         }
-    }, [activeSelection, projectData, animateTransition]);
+    }, [screenName, monitors]);
+
+    // Use a ref for projectData to avoid effect re-triggering during poll
+    const projectDataRef = useRef(null);
 
     useEffect(() => {
         const loadAndPollData = async () => {
@@ -117,10 +82,17 @@ function Projection() {
                 
                 const sync = await res.json();
                 
+                // Update Monitors
+                if (sync.discovered_monitors) {
+                    setMonitors(sync.discovered_monitors);
+                }
+
                 // Update Project Data
                 if (sync.project_data) {
+                    projectDataRef.current = sync.project_data;
                     setProjectData(sync.project_data);
-                } else if (!projectData) {
+                } else if (!projectDataRef.current) {
+                    projectDataRef.current = { walls: [], folders: [], scenes: [] };
                     setProjectData({ walls: [], folders: [], scenes: [] });
                 }
 
@@ -134,32 +106,26 @@ function Projection() {
                     setUiSync(sync.ui_sync);
                 }
 
-                // Monitor config reset check (if it was once present but now null)
+                // Monitor config reset check
                 if (!sync.monitor_config) {
                     configFailureCount.current++;
-                    console.warn(`[PROJECTION] Sync check failed: Monitor config missing in sync (${configFailureCount.current}/5)`);
                     if (configFailureCount.current >= 5) {
-                        console.error("[PROJECTION] Monitor configuration LOST. Reloading to trigger Setup...");
                         window.location.reload();
                     }
                 } else {
-                    if (configFailureCount.current > 0) console.log("[PROJECTION] Sync check recovered.");
                     configFailureCount.current = 0;
                 }
                 
                 setIsLoading(false);
             } catch (error) {
                 console.error("Failed to load projection data:", error);
-                // Don't set isLoading(false) on the first error to keep the spinner 
-                // until we get a successful sync.
             }
         };
 
         loadAndPollData(); // Initial load
-
         const intervalId = setInterval(loadAndPollData, 100); // 10Hz sync
-        return () => clearInterval(intervalId); // Cleanup interval on unmount
-    }, [projectData]);
+        return () => clearInterval(intervalId);
+    }, []); // Empty dependency array means this only runs once on mount
 
     useEffect(() => {
         if (projectData && activeSelection) {
@@ -198,8 +164,8 @@ function Projection() {
                 position: 'absolute',
                 top: '50%',
                 left: '50%',
-                width: '1777.7px', 
-                height: '1000px' 
+                width: `${stageSize.w}px`, 
+                height: `${stageSize.h}px` 
             }}>
                 <ProjectionContent 
                     walls={walls} 
