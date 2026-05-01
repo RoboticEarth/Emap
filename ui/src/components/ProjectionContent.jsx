@@ -368,7 +368,7 @@ const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLi
     };
 
     if (node.type === 'color') {
-        return <div style={{width: '100%', height: '100%', position: 'relative', backgroundColor: node.data.value || 'black'}}></div>;
+        return <div style={{width: '100%', height: '100%', position: 'relative', backgroundColor: node.data.value || 'transparent'}}></div>;
     }
 
     if (node.type === 'image' || node.type === 'video') {
@@ -418,7 +418,7 @@ const RenderNode = ({ nodeId, nodes, connections, width, height, wallColor, isLi
         }
 
         return (
-            <div style={{width: '100%', height: '100%', position: 'relative', backgroundColor: isLive ? 'black' : 'transparent'}}>
+            <div style={{width: '100%', height: '100%', position: 'relative', backgroundColor: 'transparent'}}>
                 {node.type === 'image' && node.data.value && <img src={node.data.value.split('?')[0]} style={style} />}
                 {node.type === 'video' && node.data.value && (
                     <video
@@ -492,6 +492,9 @@ const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, wal
             {walls.map(wall => {
                 const prevRootId = getRootNodeId(prevCueState, wall.id);
                 const currRootId = getRootNodeId(currentCueState, wall.id);
+                
+                // Skip walls that have no content in both previous and current cues
+                if (!prevRootId && !currRootId) return null;
                 
                 const p = wall.points;
                 const width = Math.max(getDistance(p[0], p[1]), getDistance(p[2], p[3]));
