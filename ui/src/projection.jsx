@@ -7,7 +7,7 @@ import { getEase } from './components/ProjectionContent'; // Import getEase for 
 
 function Projection() {
     const [projectData, setProjectData] = useState(null);
-    const [activeSelection, setActiveSelection] = useState(null);
+    const [activeSelection, setActiveSelection] = useState({ type: 'cue', sceneId: null, cueId: null });
     const [uiSync, setUiSync] = useState({ viewMode: 'live', menuTab: 'scenes', showGuides: false, activeWallId: null });
     const [isLoading, setIsLoading] = useState(true);
     const configFailureCount = useRef(0);
@@ -21,6 +21,36 @@ function Projection() {
     const currentCueObjRef = useRef(null);
     const prevCueObjRef = useRef(null);
     const transitionDetailsRef = useRef(null);
+
+    const animateTransition = (time) => {
+        if (!startTimeRef.current) startTimeRef.current = time;
+        const cue = transitionDetailsRef.current;
+        const duration = (cue?.transitionDuration ?? 1) * 1000;
+        const delay = (cue?.transitionDelay || 0) * 1000;
+        const totalDuration = duration + delay;
+        
+        const elapsed = time - startTimeRef.current;
+        
+        if (totalDuration <= 0) {
+            setTransitionMix(1);
+            setPrevCueState(null);
+            return;
+        }
+
+        let mix = 0;
+        if (elapsed < delay) mix = 0;
+        else mix = duration > 0 ? Math.min((elapsed - delay) / duration, 1) : 1;
+        
+        const ease = cue?.transitionEase || 'linear';
+        setTransitionMix(getEase(mix, ease));
+
+        if (elapsed < totalDuration) { 
+            requestRef.current = requestAnimationFrame(animateTransition); 
+        } else { 
+            setTransitionMix(1); 
+            setPrevCueState(null); 
+        }
+    };
 
     const getCueData = useCallback((scenes, sId, cId) => {
         if (!scenes || !sId || !cId) return null;
@@ -37,10 +67,12 @@ function Projection() {
 
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
+        const sName = params.get('screen');
+        console.log("[PROJECTION] Initializing for screen:", sName);
         if (params.get('mute') === '1') {
             setIsMuted(true);
         }
-        setScreenName(params.get('screen'));
+        setScreenName(sName);
 
         const updateScale = () => {
             setStageSize(prev => {
@@ -67,6 +99,7 @@ function Projection() {
                 const scaleH = window.innerHeight / 1000;
                 const scaleW = window.innerWidth / newW;
                 setScale(Math.min(scaleH, scaleW));
+                console.log("[PROJECTION] Stage size updated for", screenName, ":", newW, "x 1000");
             }
         }
     }, [screenName, monitors]);
@@ -82,16 +115,19 @@ function Projection() {
                 
                 const sync = await res.json();
                 
-                // Update Monitors
+                // Update Monitors - Only if changed to prevent loops
                 if (sync.discovered_monitors) {
-                    setMonitors(sync.discovered_monitors);
+                    setMonitors(prev => {
+                        if (JSON.stringify(prev) === JSON.stringify(sync.discovered_monitors)) return prev;
+                        return sync.discovered_monitors;
+                    });
                 }
 
                 // Update Project Data
                 if (sync.project_data) {
                     projectDataRef.current = sync.project_data;
                     setProjectData(sync.project_data);
-                } else if (!projectDataRef.current) {
+                } else {
                     projectDataRef.current = { walls: [], folders: [], scenes: [] };
                     setProjectData({ walls: [], folders: [], scenes: [] });
                 }
@@ -115,10 +151,10 @@ function Projection() {
                 } else {
                     configFailureCount.current = 0;
                 }
-                
-                setIsLoading(false);
             } catch (error) {
-                console.error("Failed to load projection data:", error);
+                console.error("[PROJECTION ERROR] Failed to load sync data:", error);
+            } finally {
+                setIsLoading(false);
             }
         };
 
@@ -131,13 +167,48 @@ function Projection() {
         if (projectData && activeSelection) {
             const cue = getCueData(projectData.scenes, activeSelection.sceneId, activeSelection.cueId);
             
-            // Fix: Use the INCOMING cue for transition settings
-            transitionDetailsRef.current = cue;
-            currentCueObjRef.current = cue;
-        } else {
-            currentCueObjRef.current = null;
-            transitionDetailsRef.current = null;
+            if (cue) {
+                const isDifferentCue = !prevCueObjRef.current || prevCueObjRef.current.id !== cue.id;
+                
+                if (isDifferentCue) {
+                    console.log("[PROJECTION] Cue changed to:", cue.id, cue.name);
+                    const duration = (cue?.transitionDuration ?? 1) * 1000;
+                    const delay = (cue?.transitionDelay || 0) * 1000;
+                    
+                    if (prevCueObjRef.current && (duration + delay) > 0) {
+                        let startState = (currentCueState || prevCueState);
+                        
+                        if (activeSelection.type === 'transition' && activeSelection.prevCueId) {
+                             const prevCue = projectData.scenes.find(s => s.id === activeSelection.sceneId)?.cues.find(c => c.id === activeSelection.prevCueId);
+                             if (prevCue) startState = prevCue;
+                        }
+
+                        setPrevCueState(startState);
+                        setCurrentCueState(cue);
+                        setTransitionMix(0); 
+                        startTimeRef.current = null;
+                        cancelAnimationFrame(requestRef.current);
+                        transitionDetailsRef.current = cue;
+                        requestRef.current = requestAnimationFrame(animateTransition);
+                    } else {
+                        setPrevCueState(null);
+                        setCurrentCueState(cue);
+                        setTransitionMix(1);
+                    }
+                } else {
+                    // Same cue, update current state data (for live editing)
+                    setCurrentCueState(cue);
+                }
+                prevCueObjRef.current = cue;
+            } else {
+                if (currentCueState) {
+                    console.log("[PROJECTION] Active cue is now null (No cue found for", activeSelection.sceneId, activeSelection.cueId, ")");
+                    setCurrentCueState(null);
+                    prevCueObjRef.current = null;
+                }
+            }
         }
+        return () => cancelAnimationFrame(requestRef.current);
     }, [projectData, activeSelection, getCueData]);
 
 
@@ -158,6 +229,25 @@ function Projection() {
     
     return (
         <div className="w-full h-full relative font-sans text-white bg-black overflow-hidden">
+            {/* Debug Overlay - ALWAYS VISIBLE for diagnosis */}
+            <div className="absolute top-4 left-4 z-[1000] bg-zinc-900/90 border-2 border-blue-500 p-4 rounded-lg text-xs font-mono text-blue-400 pointer-events-none shadow-2xl">
+                <div className="font-bold mb-2 border-b border-blue-800 pb-1 flex justify-between">
+                    <span>Emap Projection Debug</span>
+                    <span className="animate-pulse">● LIVE</span>
+                </div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                    <div className="text-zinc-500">Screen:</div><div>{screenName || 'Detecting...'}</div>
+                    <div className="text-zinc-500">Project:</div><div>{projectData?.name || 'NONE LOADED'}</div>
+                    <div className="text-zinc-500">Walls:</div><div>{walls.length}</div>
+                    <div className="text-zinc-500">Mode:</div><div>{viewMode}</div>
+                    <div className="text-zinc-500">Sync Tab:</div><div>{uiSync.menuTab}</div>
+                    <div className="text-zinc-500">Scene ID:</div><div className="truncate max-w-[100px]">{activeSelection?.sceneId || 'NULL'}</div>
+                    <div className="text-zinc-500">Cue ID:</div><div className="truncate max-w-[100px]">{activeSelection?.cueId || 'NULL'}</div>
+                    <div className="text-zinc-500">Render State:</div><div>{currentCueState ? 'CONTENT ACTIVE' : 'NO CONTENT'}</div>
+                    <div className="text-zinc-500">Mix:</div><div>{transitionMix.toFixed(2)}</div>
+                </div>
+            </div>
+
             <div style={{ 
                 transform: `translate(-50%, -50%) scale(${scale})`, 
                 transformOrigin: 'center center', 
