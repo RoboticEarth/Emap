@@ -2806,7 +2806,7 @@ const TabSlider = ({ activeTab, onTabChange }) => {
 
 // --- SETTINGS MODAL ---
 
-const SettingsModal = ({ isOpen, onClose, lowResourceMode, setLowResourceMode, hiddenDrives = [], setHiddenDrives }) => {
+const SettingsModal = ({ isOpen, onClose, lowResourceMode, setLowResourceMode, showDebugOverlay, setShowDebugOverlay, hiddenDrives = [], setHiddenDrives }) => {
     if (!isOpen) return null;
     return createPortal(
         <div className="fixed inset-0 z-[30000] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-scale">
@@ -2834,6 +2834,24 @@ const SettingsModal = ({ isOpen, onClose, lowResourceMode, setLowResourceMode, h
                                 className={`w-10 h-5 rounded-full p-1 transition-all duration-300 ${lowResourceMode ? 'bg-blue-600' : 'bg-zinc-800'}`}
                             >
                                 <div className={`w-3 h-3 rounded-full bg-white transition-all duration-300 transform ${lowResourceMode ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="space-y-4">
+                        <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Interface</h3>
+                        <div className="flex items-center justify-between p-4 bg-zinc-950/30 rounded-lg border border-zinc-800 hover:border-zinc-700 transition-colors">
+                            <div className="flex flex-col gap-1">
+                                <span className="text-xs font-bold text-gray-200 uppercase tracking-wider flex items-center gap-2">
+                                    Projector Debug Overlay
+                                </span>
+                                <span className="text-[10px] text-zinc-600 font-medium max-w-[280px]">Shows technical info on the projector screen for troubleshooting.</span>
+                            </div>
+                            <button 
+                                onClick={() => setShowDebugOverlay(!showDebugOverlay)}
+                                className={`w-10 h-5 rounded-full p-1 transition-all duration-300 ${showDebugOverlay ? 'bg-blue-600' : 'bg-zinc-800'}`}
+                            >
+                                <div className={`w-3 h-3 rounded-full bg-white transition-all duration-300 transform ${showDebugOverlay ? 'translate-x-5' : 'translate-x-0'}`}></div>
                             </button>
                         </div>
                     </div>
@@ -2963,6 +2981,7 @@ export default function App() {
         return saved === 'true';
     });
     const [showSettings, setShowSettings] = useState(false);
+    const [showDebugOverlay, setShowDebugOverlay] = useState(true);
 
     // Mode Hotkeys
     useEffect(() => {
@@ -3096,8 +3115,8 @@ export default function App() {
     useEffect(() => {
         if (isLoading) return; // DON'T SYNC WHILE LOADING
         console.log("[APP] Syncing UI state...");
-        db.saveState('ui_sync_state', { viewMode, menuTab, showGuides, activeWallId });
-    }, [viewMode, menuTab, showGuides, activeWallId, isLoading]);
+        db.saveState('ui_sync_state', { viewMode, menuTab, showGuides, activeWallId, showDebugOverlay });
+    }, [viewMode, menuTab, showGuides, activeWallId, showDebugOverlay, isLoading]);
 
     // Monitor for config reset
     useEffect(() => {
@@ -3811,15 +3830,16 @@ export default function App() {
     return (
         <div className={`w-full h-full relative font-sans text-white bg-zinc-950 flex flex-col ${lowResourceMode ? 'low-resource-mode' : ''}`}>
             {isLoading && <LoadingScreen />}
-            <SettingsModal 
-                isOpen={showSettings} 
-                onClose={() => setShowSettings(false)} 
-                lowResourceMode={lowResourceMode} 
-                setLowResourceMode={setLowResourceMode} 
-                hiddenDrives={hiddenDrives}
-                setHiddenDrives={setHiddenDrives}
+            <SettingsModal
+               isOpen={showSettings}
+               onClose={() => setShowSettings(false)}
+               lowResourceMode={lowResourceMode}
+               setLowResourceMode={setLowResourceMode}
+               showDebugOverlay={showDebugOverlay}
+               setShowDebugOverlay={setShowDebugOverlay}
+               hiddenDrives={hiddenDrives}
+               setHiddenDrives={setHiddenDrives}
             />
-
             {!isFullscreen && !navigator.userAgent.includes('QtWebEngine') && (
                 <div className="absolute inset-0 z-[100] bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center text-center p-8">
                     <div className="max-w-4xl space-y-8">

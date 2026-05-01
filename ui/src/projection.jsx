@@ -123,18 +123,25 @@ function Projection() {
                     });
                 }
 
-                // Update Project Data
+                // Update Project Data - Only if changed to prevent transition interruptions
                 if (sync.project_data) {
-                    projectDataRef.current = sync.project_data;
-                    setProjectData(sync.project_data);
+                    setProjectData(prev => {
+                        if (prev && JSON.stringify(prev) === JSON.stringify(sync.project_data)) return prev;
+                        projectDataRef.current = sync.project_data;
+                        return sync.project_data;
+                    });
                 } else {
                     projectDataRef.current = { walls: [], folders: [], scenes: [] };
                     setProjectData({ walls: [], folders: [], scenes: [] });
                 }
 
-                // Update Active Selection
+                // Update Active Selection - Only if changed
                 if (sync.active_selection) {
-                    setActiveSelection(sync.active_selection);
+                    setActiveSelection(prev => {
+                        const s = sync.active_selection;
+                        if (prev && prev.type === s.type && prev.sceneId === s.sceneId && prev.cueId === s.cueId && prev.prevCueId === s.prevCueId) return prev;
+                        return s;
+                    });
                 }
 
                 // Update UI Sync State
@@ -229,24 +236,26 @@ function Projection() {
     
     return (
         <div className="w-full h-full relative font-sans text-white bg-black overflow-hidden">
-            {/* Debug Overlay - ALWAYS VISIBLE for diagnosis */}
-            <div className="absolute top-4 left-4 z-[1000] bg-zinc-900/90 border-2 border-blue-500 p-4 rounded-lg text-xs font-mono text-blue-400 pointer-events-none shadow-2xl">
-                <div className="font-bold mb-2 border-b border-blue-800 pb-1 flex justify-between">
-                    <span>Emap Projection Debug</span>
-                    <span className="animate-pulse">● LIVE</span>
+            {/* Debug Overlay */}
+            {uiSync?.showDebugOverlay !== false && (
+                <div className="absolute top-4 left-4 z-[1000] bg-zinc-900/90 border-2 border-blue-500 p-4 rounded-lg text-xs font-mono text-blue-400 pointer-events-none shadow-2xl">
+                    <div className="font-bold mb-2 border-b border-blue-800 pb-1 flex justify-between">
+                        <span>Emap Projection Debug</span>
+                        <span className="animate-pulse">● LIVE</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                        <div className="text-zinc-500">Screen:</div><div>{screenName || 'Detecting...'}</div>
+                        <div className="text-zinc-500">Project:</div><div>{projectData?.name || 'NONE LOADED'}</div>
+                        <div className="text-zinc-500">Walls:</div><div>{walls.length}</div>
+                        <div className="text-zinc-500">Mode:</div><div>{viewMode}</div>
+                        <div className="text-zinc-500">Sync Tab:</div><div>{uiSync.menuTab}</div>
+                        <div className="text-zinc-500">Scene ID:</div><div className="truncate max-w-[100px]">{activeSelection?.sceneId || 'NULL'}</div>
+                        <div className="text-zinc-500">Cue ID:</div><div className="truncate max-w-[100px]">{activeSelection?.cueId || 'NULL'}</div>
+                        <div className="text-zinc-500">Render State:</div><div>{currentCueState ? 'CONTENT ACTIVE' : 'NO CONTENT'}</div>
+                        <div className="text-zinc-500">Mix:</div><div>{transitionMix.toFixed(2)}</div>
+                    </div>
                 </div>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                    <div className="text-zinc-500">Screen:</div><div>{screenName || 'Detecting...'}</div>
-                    <div className="text-zinc-500">Project:</div><div>{projectData?.name || 'NONE LOADED'}</div>
-                    <div className="text-zinc-500">Walls:</div><div>{walls.length}</div>
-                    <div className="text-zinc-500">Mode:</div><div>{viewMode}</div>
-                    <div className="text-zinc-500">Sync Tab:</div><div>{uiSync.menuTab}</div>
-                    <div className="text-zinc-500">Scene ID:</div><div className="truncate max-w-[100px]">{activeSelection?.sceneId || 'NULL'}</div>
-                    <div className="text-zinc-500">Cue ID:</div><div className="truncate max-w-[100px]">{activeSelection?.cueId || 'NULL'}</div>
-                    <div className="text-zinc-500">Render State:</div><div>{currentCueState ? 'CONTENT ACTIVE' : 'NO CONTENT'}</div>
-                    <div className="text-zinc-500">Mix:</div><div>{transitionMix.toFixed(2)}</div>
-                </div>
-            </div>
+            )}
 
             <div style={{ 
                 transform: `translate(-50%, -50%) scale(${scale})`, 
