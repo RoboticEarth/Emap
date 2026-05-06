@@ -570,9 +570,11 @@ async fn delete_fs_file(data: web::Data<AppState>, req: web::Json<DeleteFileRequ
         
         let p1080 = previews_dir.join(format!("{}_1080p.{}", base_name, ext));
         let p720 = previews_dir.join(format!("{}_720p.{}", base_name, ext));
+        let p400 = previews_dir.join(format!("{}_400p.{}", base_name, ext));
         
         if p1080.exists() { let _ = fs::remove_file(p1080); }
         if p720.exists() { let _ = fs::remove_file(p720); }
+        if p400.exists() { let _ = fs::remove_file(p400); }
 
         // 1. Delete from Disk
         let disk_res = if path.is_dir() {
@@ -618,14 +620,17 @@ async fn process_image_asset(query: web::Query<ProcessQuery>) -> impl Responder 
             let ext = src.extension().unwrap_or_default().to_string_lossy().to_string();
             let p1080 = previews_dir.join(format!("{}_1080p.{}", base_name, if mime_type.starts_with("video/") { "jpg" } else { &ext }));
             let p720 = previews_dir.join(format!("{}_720p.{}", base_name, if mime_type.starts_with("video/") { "jpg" } else { &ext }));
+            let p400 = previews_dir.join(format!("{}_400p.{}", base_name, if mime_type.starts_with("video/") { "jpg" } else { &ext }));
             
             if mime_type.starts_with("image/") {
                 let _ = std::process::Command::new("magick").arg(&src).arg("-resize").arg("1920x1080>").arg(&p1080).output();
                 let _ = std::process::Command::new("magick").arg(&src).arg("-resize").arg("1280x720>").arg(&p720).output();
+                let _ = std::process::Command::new("magick").arg(&src).arg("-resize").arg("400x400>").arg(&p400).output();
             } else {
                 // Video preview using ffmpeg
                 let _ = std::process::Command::new("ffmpeg").arg("-i").arg(&src).arg("-ss").arg("00:00:01").arg("-vframes").arg("1").arg("-vf").arg("scale=1920:1080:force_original_aspect_ratio=decrease").arg("-y").arg(&p1080).output();
                 let _ = std::process::Command::new("ffmpeg").arg("-i").arg(&src).arg("-ss").arg("00:00:01").arg("-vframes").arg("1").arg("-vf").arg("scale=1280:720:force_original_aspect_ratio=decrease").arg("-y").arg(&p720).output();
+                let _ = std::process::Command::new("ffmpeg").arg("-i").arg(&src).arg("-ss").arg("00:00:01").arg("-vframes").arg("1").arg("-vf").arg("scale=400:400:force_original_aspect_ratio=decrease").arg("-y").arg(&p400).output();
             }
         }
         Ok(())
@@ -651,9 +656,15 @@ async fn get_fs_preview(req: HttpRequest, query: web::Query<PreviewQuery>) -> im
     
     let p1080 = assets_dir.join(".previews").join(format!("{}_1080p.{}", base_name, if is_video { "jpg" } else { &ext }));
     let p720 = assets_dir.join(".previews").join(format!("{}_720p.{}", base_name, if is_video { "jpg" } else { &ext }));
+    let p400 = assets_dir.join(".previews").join(format!("{}_400p.{}", base_name, if is_video { "jpg" } else { &ext }));
     
-    let is_low_res = req.query_string().contains("res=720");
-    let target_preview = if is_low_res { p720 } else { p1080 };
+    let target_preview = if req.query_string().contains("res=400") {
+        p400
+    } else if req.query_string().contains("res=720") {
+        p720
+    } else {
+        p1080
+    };
 
     if target_preview.exists() {
         return match NamedFile::open_async(target_preview).await {
@@ -879,14 +890,18 @@ async fn get_asset(data: web::Data<AppState>, req: HttpRequest, id: web::Path<St
             file_path = preview_path;
         }
     }
-    // Priority 2: Thumbnail request (use 720p as default thumbnail if available)
+    // Priority 2: Thumbnail request (use 400p as default thumbnail if available, fallback to 720p)
     else if query.thumb.is_some() {
         let base_name = file_path.file_stem().unwrap_or_default().to_string_lossy().to_string();
         let ext = file_path.extension().unwrap_or_default().to_string_lossy().to_string();
         let run_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let preview_path = run_dir.join("assets").join(".previews").join(format!("{}_720p.{}", base_name, ext));
-        if preview_path.exists() {
-            file_path = preview_path;
+        let p400 = run_dir.join("assets").join(".previews").join(format!("{}_400p.{}", base_name, ext));
+        let p720 = run_dir.join("assets").join(".previews").join(format!("{}_720p.{}", base_name, ext));
+        
+        if p400.exists() {
+            file_path = p400;
+        } else if p720.exists() {
+            file_path = p720;
         }
     }
 

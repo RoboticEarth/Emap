@@ -876,7 +876,7 @@ const FileExplorer = ({ isOpen, onClose, onImport, showConfirm, showAlert, hidde
                                                 {!(importProgress?.phase === 'import' && activeTab === 'server') && (
                                                     <img 
                                                         key={`${item.path}-${importProgress?.phase || 'stable'}`}
-                                                        src={`/api/fs/preview?path=${encodeURIComponent(item.path)}${lowResourceMode ? '&res=720' : '&res=1080'}${importProgress ? `&t=${Date.now()}` : ''}`} 
+                                                        src={`/api/fs/preview?path=${encodeURIComponent(item.path)}${lowResourceMode ? '&res=400' : '&res=1080'}${importProgress ? `&t=${Date.now()}` : ''}`} 
                                                         className="w-full h-full object-cover transition-opacity duration-300" 
                                                         style={{ opacity: 0 }}
                                                         onLoad={(e) => {
@@ -1189,13 +1189,13 @@ const AssetBrowser = ({ isOpen, onClose, onSelect, showConfirm, showAlert, hidde
                                         </div>
                                     ) : (
                                         <img 
-                                            src={item.url + (lowResourceMode ? "&thumb=1" : "")} 
+                                            src={item.url + (lowResourceMode ? "&res=400" : "")} 
                                             className="w-full h-full object-cover" 
                                             loading="lazy" 
                                             alt="" 
                                             onError={(e) => {
                                                 // If thumbnail fails or doesn't exist, try original
-                                                if (e.target.src.includes("&thumb=1")) {
+                                                if (e.target.src.includes("&res=400")) {
                                                     e.target.src = item.url;
                                                 }
                                             }}
