@@ -2696,7 +2696,7 @@ const TransitionEditor = ({ cue, updateCue }) => {
     return (
         <div className="w-full h-full bg-transparent p-6 flex gap-8 text-gray-300">
             <div className="w-64 flex flex-col gap-6 pt-2">
-                <div><h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2"><Link size={16}/> TRANSITION SETTINGS</h3>
+                <div><h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2 uppercase tracking-tighter"><Link size={16}/> TRANSITION TO {cue.name}</h3>
                     <div className="space-y-4">
                         <div><div className="flex justify-between mb-1"><label className="text-xs font-bold">Duration</label><span className="text-xs font-mono text-blue-400">{duration.toFixed(1)}s</span></div>
                         <input type="range" min="0" max="10" step="0.1" value={duration} onInput={(e) => updateCue({ transitionDuration: parseFloat(e.target.value) })} className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-blue-500" /></div>
@@ -3114,6 +3114,13 @@ export default function App() {
     const [showDebugOverlay, setShowDebugOverlay] = useState(false);
     const [spotlight, setSpotlight] = useState({ active: false, x: 0, y: 0, size: 200, feather: 50, intensity: 0.7 });
 
+    // Deactivate spotlight when exiting live mode
+    useEffect(() => {
+        if (viewMode !== 'live' && spotlight.active) {
+            setSpotlight(p => ({ ...p, active: false }));
+        }
+    }, [viewMode, spotlight.active]);
+
     // Mode Hotkeys
     useEffect(() => {
         const handleKeyDown = (e) => {
@@ -3387,11 +3394,10 @@ export default function App() {
         document.documentElement.requestFullscreen().catch(e => console.log("Fullscreen request failed:", e)); 
     };
     const getCueData = (sId, cId) => { const s = scenes.find(x => x.id === sId); return s ? s.cues.find(x => x.id === cId) : null; };
-    const targetCueId = activeSelection.type === 'cue' ? activeSelection.cueId : activeSelection.prevCueId;
+    const targetCueId = activeSelection.cueId;
     const currentCueObj = useMemo(() => getCueData(activeSelection.sceneId, targetCueId), [activeSelection, scenes]);
     const currentCueObjRef = useRef(currentCueObj);
     const prevCueObjRef = useRef(null);
-    useEffect(() => { currentCueObjRef.current = currentCueObj; }, [currentCueObj]);
 
     const currentSceneIndex = useMemo(() => scenes.findIndex(s => s.id === activeSelection.sceneId), [scenes, activeSelection.sceneId]);
     const currentCueIndex = useMemo(() => {
@@ -3438,6 +3444,9 @@ export default function App() {
         if (currentCueObj) {
             const isDifferentCue = !prevCueObjRef.current || prevCueObjRef.current.id !== currentCueObj.id;
             
+            // Update ref immediately to avoid race condition in animateTransition
+            currentCueObjRef.current = currentCueObj;
+
             if (isDifferentCue) {
                 const duration = (currentCueObj?.transitionDuration ?? 1) * 1000;
                 const delay = (currentCueObj?.transitionDelay || 0) * 1000;
@@ -3974,13 +3983,6 @@ export default function App() {
 
     return (
         <div className={`w-full h-full relative font-sans text-white bg-zinc-950 flex flex-col ${lowResourceMode ? 'low-resource-mode' : ''}`}>
-            {spotlight.active && (
-                <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[5000] px-6 py-2 bg-blue-600/90 backdrop-blur-md rounded-full border border-blue-400 shadow-[0_0_20px_rgba(59,130,246,0.5)] animate-bounce pointer-events-none">
-                    <span className="text-xs font-black uppercase tracking-widest text-white flex items-center gap-2">
-                        <Icons.MousePointer2 size={14} /> SPOTLIGHT ACTIVE
-                    </span>
-                </div>
-            )}
             {isLoading && <LoadingScreen />}
             <SettingsModal
                isOpen={showSettings}
