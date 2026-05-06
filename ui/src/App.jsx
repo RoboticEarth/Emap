@@ -127,6 +127,85 @@ const RotationControl = ({ value, onChange }) => {
     );
 };
 
+const FadingControl = ({ value = { top: 0, right: 0, bottom: 0, left: 0, intensity: 50 }, onChange }) => {
+    const updateSide = (side, val) => {
+        onChange({ ...value, [side]: Math.max(0, Math.min(100, val)) });
+    };
+
+    const intensity = value.intensity ?? 50;
+    // Bias logic matching ProjectionContent
+    const bias = 0.2 + (intensity / 100) * 0.7; 
+
+    return (
+        <div className="pt-2 border-t border-zinc-700/50">
+            <label className="text-sm text-gray-300 font-black flex items-center gap-2 uppercase tracking-tight mb-2">
+                <Blend size={14} className="text-blue-400" /> Sided Fading
+            </label>
+            <div className="bg-zinc-950/80 p-4 rounded-2xl border border-zinc-800/50 shadow-2xl flex flex-col gap-4">
+                <div className="flex justify-center">
+                    <div className="relative w-32 h-24 bg-zinc-900 border-2 border-zinc-800 rounded-lg flex items-center justify-center">
+                        {/* Mock wall with fade indicators */}
+                        <div className="absolute inset-0 bg-blue-500/10 rounded-sm"></div>
+                        
+                        {/* Preview using blue indicators to show fade zones clearly */}
+                        {['top', 'bottom', 'left', 'right'].map(side => {
+                            const val = value[side] || 0;
+                            if (val === 0) return null;
+                            const dir = side === 'top' ? 'bottom' : side === 'bottom' ? 'top' : side === 'left' ? 'right' : 'left';
+                            const depth = (val / 100) * 50; 
+                            return (
+                                <div 
+                                    key={side}
+                                    className={`absolute inset-0 pointer-events-none`}
+                                    style={{ 
+                                        background: `linear-gradient(to ${dir}, rgba(59, 130, 246, 0.4) 0%, transparent ${depth}%)`,
+                                        borderTop: side === 'top' ? '1px solid #3b82f6' : 'none',
+                                        borderBottom: side === 'bottom' ? '1px solid #3b82f6' : 'none',
+                                        borderLeft: side === 'left' ? '1px solid #3b82f6' : 'none',
+                                        borderRight: side === 'right' ? '1px solid #3b82f6' : 'none',
+                                    }}
+                                />
+                            );
+                        })}
+                        
+                        <div className="text-[10px] text-zinc-600 font-black uppercase z-10">Preview</div>
+                    </div>
+                </div>
+                
+                <div className="space-y-1 mb-2 pb-2 border-b border-zinc-800">
+                    <div className="flex justify-between items-center">
+                        <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest">Fade Intensity</span>
+                        <span className="text-[9px] font-mono text-blue-400">{intensity}%</span>
+                    </div>
+                    <input 
+                        type="range" min="0" max="100" 
+                        value={intensity} 
+                        onChange={(e) => onChange({ ...value, intensity: parseInt(e.target.value) })}
+                        className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    />
+                </div>
+
+                <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                    {['top', 'bottom', 'left', 'right'].map(side => (
+                        <div key={side} className="space-y-1">
+                            <div className="flex justify-between items-center">
+                                <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">{side}</span>
+                                <span className="text-[9px] font-mono text-blue-400">{value[side]}%</span>
+                            </div>
+                            <input 
+                                type="range" min="0" max="100" 
+                                value={value[side]} 
+                                onChange={(e) => updateSide(side, parseInt(e.target.value))}
+                                className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                            />
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const ConflictModal = ({ isOpen, fileName, onKeepOld, onKeepNew, applyToAll, setApplyToAll }) => {
     if (!isOpen) return null;
     return createPortal(
@@ -1936,8 +2015,36 @@ const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, wal
 
                 const currentLayerOpacity = (isTransitioning && !isSameNode) ? mix : 1;
 
+                // Sided Fading Logic
+                const f = wall.fade || { top: 0, right: 0, bottom: 0, left: 0, intensity: 50 };
+                const masks = [];
+                // User wants 100% slider to be "a quarter and 1/8" (approx 37.5-40% of image)
+                const maxDepth = 0.4; 
+                const intensity = f.intensity ?? 50;
+                const bias = 0.5 + (intensity / 100) * 0.45; // 0.5 to 0.95
+
+                if (f.top > 0) masks.push(`linear-gradient(to bottom, transparent 0%, rgba(0,0,0,${1 - bias}) ${f.top * maxDepth * 0.5}%, black ${f.top * maxDepth}%)`);
+                if (f.bottom > 0) masks.push(`linear-gradient(to top, transparent 0%, rgba(0,0,0,${1 - bias}) ${f.bottom * maxDepth * 0.5}%, black ${f.bottom * maxDepth}%)`);
+                if (f.left > 0) masks.push(`linear-gradient(to right, transparent 0%, rgba(0,0,0,${1 - bias}) ${f.left * maxDepth * 0.5}%, black ${f.left * maxDepth}%)`);
+                if (f.right > 0) masks.push(`linear-gradient(to left, transparent 0%, rgba(0,0,0,${1 - bias}) ${f.right * maxDepth * 0.5}%, black ${f.right * maxDepth}%)`);
+                
+                const maskImage = masks.length > 0 ? masks.join(', ') : 'none';
+
                 return (
-                    <div key={wall.id} className="absolute left-0 top-0 origin-top-left will-change-transform" style={{ width: `${width}px`, height: `${height}px`, transform: cssM, overflow: 'hidden' }}>
+                    <div 
+                        key={wall.id} 
+                        className="absolute left-0 top-0 origin-top-left will-change-transform" 
+                        style={{ 
+                            width: `${width}px`, 
+                            height: `${height}px`, 
+                            transform: cssM, 
+                            overflow: 'hidden',
+                            maskImage: maskImage,
+                            WebkitMaskImage: maskImage,
+                            maskComposite: 'intersect',
+                            WebkitMaskComposite: 'source-in'
+                        }}
+                    >
                         {isTransitioning && !isSameNode && prevRootId && (
                             <div key={prevRootId} style={{ opacity: 1 - mix, position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
                                         <RenderNode nodeId={prevRootId} nodes={prevCueState.nodes} connections={prevCueState.connections} width={width} height={height} wallColor={wall.color} isLive={isLive} isTransitioning={isTransitioning} isMuted={isMuted} />
@@ -2924,6 +3031,19 @@ export default function App() {
     const viewportRef = useRef(null);
 
     const handleViewportWheel = (e) => {
+        if (spotlight.active) {
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? -10 : 10;
+            if (e.shiftKey) {
+                setSpotlight(p => ({ ...p, intensity: Math.max(0, Math.min(1, p.intensity + delta / 100)) }));
+            } else if (e.altKey) {
+                setSpotlight(p => ({ ...p, feather: Math.max(0, Math.min(100, p.feather + delta)) }));
+            } else {
+                setSpotlight(p => ({ ...p, size: Math.max(10, p.size + delta * 2) }));
+            }
+            return;
+        }
+
         const zoomSpeed = 0.001;
         const delta = -e.deltaY * zoomSpeed;
         const newZoom = Math.min(Math.max(viewportZoom + delta, 0.05), 10);
@@ -2945,7 +3065,14 @@ export default function App() {
     };
 
     const handleViewportMouseMove = (e) => {
-        if (e.buttons === 4 || (e.buttons === 1 && e.shiftKey)) {
+        if (spotlight.active) {
+            const rect = e.currentTarget.getBoundingClientRect();
+            setSpotlight(p => ({
+                ...p,
+                x: (e.clientX - rect.left) / viewportZoom - viewportPan.x / viewportZoom,
+                y: (e.clientY - rect.top) / viewportZoom - viewportPan.y / viewportZoom
+            }));
+        } else if (e.buttons === 4 || (e.buttons === 1 && e.shiftKey)) {
             setViewportPan(p => ({ x: p.x + e.movementX, y: p.y + e.movementY }));
         }
     };
@@ -2984,7 +3111,8 @@ export default function App() {
         return saved === 'true';
     });
     const [showSettings, setShowSettings] = useState(false);
-    const [showDebugOverlay, setShowDebugOverlay] = useState(true);
+    const [showDebugOverlay, setShowDebugOverlay] = useState(false);
+    const [spotlight, setSpotlight] = useState({ active: false, x: 0, y: 0, size: 200, feather: 50, intensity: 0.7 });
 
     // Mode Hotkeys
     useEffect(() => {
@@ -2992,6 +3120,11 @@ export default function App() {
             // Ignore if typing in an input or textarea
             if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
             if (document.activeElement.isContentEditable) return;
+
+            if (e.code === 'Space' && viewMode === 'live') {
+                e.preventDefault();
+                setSpotlight(p => ({ ...p, active: !p.active }));
+            }
 
             const key = e.key.toLowerCase();
             if (key === 'm') { setMoveMode(p => !p); if(!moveMode) { setScaleMode(false); setAlignMode(false); } }
@@ -3008,9 +3141,18 @@ export default function App() {
                 setIsGroupSelection(false);
             }
         };
+
+        const handleKeyUp = (e) => {
+            // Space is now a toggle in handleKeyDown
+        };
+
         window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [moveMode, scaleMode, alignMode, menuOpen, showGuides]);
+        window.addEventListener('keyup', handleKeyUp);
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+            window.removeEventListener('keyup', handleKeyUp);
+        };
+    }, [moveMode, scaleMode, alignMode, menuOpen, showGuides, viewMode]);
 
     // Auto-bypass fullscreen gate if in Qt WebEngine (which is always fullscreen for us)
     useEffect(() => {
@@ -3118,8 +3260,8 @@ export default function App() {
     useEffect(() => {
         if (isLoading) return; // DON'T SYNC WHILE LOADING
         console.log("[APP] Syncing UI state...");
-        db.saveState('ui_sync_state', { viewMode, menuTab, showGuides, activeWallId, showDebugOverlay });
-    }, [viewMode, menuTab, showGuides, activeWallId, showDebugOverlay, isLoading]);
+        db.saveState('ui_sync_state', { viewMode, menuTab, showGuides, activeWallId, showDebugOverlay, spotlight });
+    }, [viewMode, menuTab, showGuides, activeWallId, showDebugOverlay, spotlight, isLoading]);
 
     // Monitor for config reset
     useEffect(() => {
@@ -3832,6 +3974,13 @@ export default function App() {
 
     return (
         <div className={`w-full h-full relative font-sans text-white bg-zinc-950 flex flex-col ${lowResourceMode ? 'low-resource-mode' : ''}`}>
+            {spotlight.active && (
+                <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[5000] px-6 py-2 bg-blue-600/90 backdrop-blur-md rounded-full border border-blue-400 shadow-[0_0_20px_rgba(59,130,246,0.5)] animate-bounce pointer-events-none">
+                    <span className="text-xs font-black uppercase tracking-widest text-white flex items-center gap-2">
+                        <Icons.MousePointer2 size={14} /> SPOTLIGHT ACTIVE
+                    </span>
+                </div>
+            )}
             {isLoading && <LoadingScreen />}
             <SettingsModal
                isOpen={showSettings}
@@ -3873,6 +4022,18 @@ export default function App() {
                         <WallBackgroundLayer walls={walls} currentCueState={currentCueState} isLive={viewMode === 'live'} isTransitioning={transitionMix < 1} shouldShow={menuTab === 'scenes'} viewportPan={viewportPan} viewportZoom={viewportZoom} />
                         {(viewMode === 'live' || menuTab === 'scenes') && <TransitioningProjectedContent prevCueState={prevCueState} currentCueState={currentCueState} mix={transitionMix} walls={walls} isLive={viewMode === 'live'} viewportPan={viewportPan} viewportZoom={viewportZoom} />}
                         {renderSVG(viewMode === 'live')}
+                        
+                        {/* Spotlight Overlay on Dashboard */}
+                        {spotlight.active && (
+                            <div 
+                                className="absolute inset-0 z-[2000] pointer-events-none"
+                                style={{
+                                    backgroundColor: `rgba(0,0,0,${spotlight.intensity})`,
+                                    maskImage: `radial-gradient(circle ${spotlight.size}px at ${spotlight.x * viewportZoom + viewportPan.x}px ${spotlight.y * viewportZoom + viewportPan.y}px, transparent 0%, black ${100 - spotlight.feather}%, black 100%)`,
+                                    WebkitMaskImage: `radial-gradient(circle ${spotlight.size}px at ${spotlight.x * viewportZoom + viewportPan.x}px ${spotlight.y * viewportZoom + viewportPan.y}px, transparent 0%, black ${100 - spotlight.feather}%, black 100%)`
+                                }}
+                            />
+                        )}
                     </div>
 
                     {monitors.length === 1 && (
@@ -4061,6 +4222,11 @@ export default function App() {
                                                 </div>
                                             </div>
                                         </div>
+
+                                        <FadingControl 
+                                            value={activeWall.fade || { top: 0, right: 0, bottom: 0, left: 0 }} 
+                                            onChange={(val) => setWalls(p => p.map(w => w.id === activeWall.id ? { ...w, fade: val } : w))} 
+                                        />
                                     </div>
                                 )}
                                 {activeFolder && (
@@ -4085,7 +4251,7 @@ export default function App() {
                                         <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Hierarchy</h3>
                                         <div className="flex gap-1">
                                             <button onClick={addFolder} className="text-xs bg-zinc-800 hover:bg-zinc-700 w-7 h-7 flex items-center justify-center rounded-lg transition-colors border border-zinc-700" title="New Group"> <FolderPlus size={14} className="text-zinc-400" /> </button>
-                                            <button onClick={() => { const newId = Math.max(0, ...walls.map(w => w.id)) + 1; setWalls(p => [...p, { id: newId, name: `Obj ${newId}`, color: `hsl(${Math.random()*360},70%,60%)`, folderId: null, points: [{x:300,y:300},{x:400,y:300},{x:400,y:400},{x:300,y:400}] }]); }} className="text-xs bg-blue-600 hover:bg-blue-500 w-7 h-7 flex items-center justify-center rounded-lg shadow-lg shadow-blue-900/40 transition-all active:scale-95" title="New Object"> <Plus size={14} className="text-white" /> </button>
+                                            <button onClick={() => { const newId = Math.max(0, ...walls.map(w => w.id)) + 1; setWalls(p => [...p, { id: newId, name: `Obj ${newId}`, color: `hsl(${Math.random()*360},70%,60%)`, folderId: null, points: [{x:300,y:300},{x:400,y:300},{x:400,y:400},{x:300,y:400}], fade: { top: 0, right: 0, bottom: 0, left: 0, intensity: 100 } }]); }} className="text-xs bg-blue-600 hover:bg-blue-500 w-7 h-7 flex items-center justify-center rounded-lg shadow-lg shadow-blue-900/40 transition-all active:scale-95" title="New Object"> <Plus size={14} className="text-white" /> </button>
                                         </div>
                                     </div>
                                     <div className="bg-zinc-950/30 rounded-xl p-1 border border-zinc-800/50">

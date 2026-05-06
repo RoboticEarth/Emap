@@ -1194,6 +1194,7 @@ fn main() {
                         // Only the first projection screen (index 0) gets audio. Others are muted.
                         url: "http://127.0.0.1:8080/?screen=" + encodeURIComponent(modelData.name) + (index > 0 ? "&mute=1" : "")
                         
+                        lifecycleState: WebEngineView.LifecycleState.Active
                         settings.pluginsEnabled: true
                         settings.playbackRequiresUserGesture: false
                         settings.javascriptCanAccessClipboard: true

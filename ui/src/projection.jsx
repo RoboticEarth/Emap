@@ -276,6 +276,7 @@ function Projection() {
                     showGuides={uiSync.showGuides}
                     activeWallId={uiSync.activeWallId}
                     isMuted={isMuted}
+                    spotlight={uiSync.spotlight}
                 />
             </div>
         </div>

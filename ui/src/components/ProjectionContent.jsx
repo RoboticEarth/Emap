@@ -529,18 +529,56 @@ const TransitioningProjectedContent = ({ prevCueState, currentCueState, mix, wal
 
                 const currentLayerOpacity = (isTransitioning && !isSameNode) ? mix : 1;
 
+                // Sided Fading Logic
+                const f = wall.fade || { top: 0, right: 0, bottom: 0, left: 0, intensity: 50 };
+                // User wants 100% slider to be more substantial
+                const maxDepth = 0.5; 
+                const intensity = f.intensity ?? 50;
+                const bias = 0.2 + (intensity / 100) * 0.7; 
+
+                const getMask = (side, val) => {
+                    if (val <= 0) return 'none';
+                    const dir = side === 'top' ? 'bottom' : side === 'bottom' ? 'top' : side === 'left' ? 'right' : 'left';
+                    const depth = val * maxDepth;
+                    return `linear-gradient(to ${dir}, transparent 0%, rgba(0,0,0,${1 - bias}) ${depth * 0.5}%, black ${depth}%)`;
+                };
+
+                const maskTop = getMask('top', f.top);
+                const maskBottom = getMask('bottom', f.bottom);
+                const maskLeft = getMask('left', f.left);
+                const maskRight = getMask('right', f.right);
+
                 return (
-                    <div key={wall.id} className="absolute left-0 top-0 origin-top-left will-change-transform" style={{ width: `${width}px`, height: `${height}px`, transform: cssM, overflow: 'hidden' }}>
-                        {isTransitioning && !isSameNode && prevRootId && (
-                            <div key={prevRootId} style={{ opacity: 1 - mix, position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
-                                        <RenderNode nodeId={prevRootId} nodes={prevCueState.nodes} connections={prevCueState.connections} width={width} height={height} wallColor={wall.color} isLive={isLive} isTransitioning={isTransitioning} isMuted={isMuted} />
-                            </div>
-                        )}
-                        {currentNodeToRender && (
-                            <div key={currRootId} style={{ opacity: currentLayerOpacity, position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
-                                {currentNodeToRender}
-                            </div>
-                        )}
+                    <div 
+                        key={wall.id} 
+                        className="absolute left-0 top-0 origin-top-left will-change-transform" 
+                        style={{ 
+                            width: `${width}px`, 
+                            height: `${height}px`, 
+                            transform: cssM, 
+                            overflow: 'hidden'
+                        }}
+                    >
+                        {/* Nested divs to ensure masks intersect correctly across all browsers */}
+                        <div style={{ width: '100%', height: '100%', maskImage: maskTop, WebkitMaskImage: maskTop }}>
+                        <div style={{ width: '100%', height: '100%', maskImage: maskBottom, WebkitMaskImage: maskBottom }}>
+                        <div style={{ width: '100%', height: '100%', maskImage: maskLeft, WebkitMaskImage: maskLeft }}>
+                        <div style={{ width: '100%', height: '100%', maskImage: maskRight, WebkitMaskImage: maskRight }}>
+                            {isTransitioning && !isSameNode && prevRootId && (
+                                <div key={prevRootId} style={{ opacity: 1 - mix, position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
+                                            <RenderNode nodeId={prevRootId} nodes={prevCueState.nodes} connections={prevCueState.connections} width={width} height={height} wallColor={wall.color} isLive={isLive} isTransitioning={isTransitioning} isMuted={isMuted} />
+                                </div>
+                            )}
+
+                            {currentNodeToRender && (
+                                <div key={currRootId} style={{ opacity: currentLayerOpacity, position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
+                                    {currentNodeToRender}
+                                </div>
+                            )}
+                        </div>
+                        </div>
+                        </div>
+                        </div>
                     </div>
                 );
             })}
@@ -601,7 +639,7 @@ const WarpedTextureGrid = ({ wallPoints }) => {
 };
 
 // Main ProjectionContent Component
-export const ProjectionContent = ({ walls, currentCueState, prevCueState, transitionMix, viewMode, menuTab, showGuides, activeWallId, viewportPan, viewportZoom, isMuted }) => {
+export const ProjectionContent = ({ walls, currentCueState, prevCueState, transitionMix, viewMode, menuTab, showGuides, activeWallId, viewportPan, viewportZoom, isMuted, spotlight }) => {
     const isLive = viewMode === 'live';
     const isTransitioning = transitionMix < 1;
     const transform = viewportPan && viewportZoom ? `translate(${viewportPan.x}px, ${viewportPan.y}px) scale(${viewportZoom})` : 'none';
@@ -611,6 +649,18 @@ export const ProjectionContent = ({ walls, currentCueState, prevCueState, transi
             <WallBackgroundLayer walls={walls} currentCueState={currentCueState} isLive={isLive} isTransitioning={isTransitioning} shouldShow={menuTab === 'scenes'} viewportPan={viewportPan} viewportZoom={viewportZoom} />
             <TransitioningProjectedContent prevCueState={prevCueState} currentCueState={currentCueState} mix={transitionMix} walls={walls} isLive={isLive} viewportPan={viewportPan} viewportZoom={viewportZoom} isMuted={isMuted} />
             
+            {/* Spotlight Overlay */}
+            {spotlight?.active && (
+                <div 
+                    className="absolute inset-0 z-[2000] pointer-events-none"
+                    style={{
+                        backgroundColor: `rgba(0,0,0,${spotlight.intensity})`,
+                        maskImage: `radial-gradient(circle ${spotlight.size}px at ${spotlight.x}px ${spotlight.y}px, transparent 0%, black ${100 - spotlight.feather}%, black 100%)`,
+                        WebkitMaskImage: `radial-gradient(circle ${spotlight.size}px at ${spotlight.x}px ${spotlight.y}px, transparent 0%, black ${100 - spotlight.feather}%, black 100%)`
+                    }}
+                />
+            )}
+
             {/* SVG Overlay for Mapping Geometry */}
             <svg className="absolute inset-0 w-full h-full pointer-events-none">
                 <defs>
