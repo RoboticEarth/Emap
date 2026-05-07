@@ -31,8 +31,8 @@ struct AppState {
     monitor_config: Mutex<Option<AppConfig>>,
 }
 
-#[derive(Serialize, Deserialize)]
-struct AssetMeta { id: String, name: String, path: String, mime_type: String, #[serde(default)] tags: Vec<String> }
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct AssetMeta { id: String, name: String, path: String, mime_type: String, tags: Vec<String> }
 
 #[derive(Serialize, Deserialize)]
 struct ProjectMeta { id: String, name: String, created_at: String }
@@ -497,9 +497,9 @@ async fn list_assets(data: web::Data<AppState>) -> impl Responder {
 
 #[derive(Deserialize)]
 struct ListParams { path: Option<String> }
-#[derive(Serialize)]
-struct FileItem { name: String, path: String, #[serde(rename = "type")] type_: String, size: String, #[serde(default)] tags: Vec<String> }
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct FileItem { name: String, path: String, #[serde(rename = "type")] type_: String, size: String, tags: Vec<String> }
+#[derive(Serialize, Deserialize, Clone, Debug)]
 struct ListResponse { path: String, items: Vec<FileItem> }
 
 #[get("/api/fs/list")]
@@ -730,13 +730,16 @@ async fn get_drives() -> impl Responder {
         let mount_points: Vec<String> = vec![];
 
         for mp in mount_points {
-            if let Ok(entries) = fs::read_dir(mp) {
+            if let Ok(entries) = fs::read_dir(&mp) {
                 for entry in entries.flatten() {
                     if let Ok(meta) = entry.metadata() {
                         if meta.is_dir() {
+                            let name = entry.file_name().to_string_lossy().to_string();
+                            let path = entry.path().to_string_lossy().to_string();
+                            println!("[BACKEND] [DRIVES] Found drive: {} at {}", name, path);
                             drives.push(FileItem {
-                                name: entry.file_name().to_string_lossy().to_string(),
-                                path: entry.path().to_string_lossy().to_string(),
+                                name,
+                                path,
                                 type_: "drive".to_string(),
                                 size: "".to_string(),
                                 tags: Vec::new(),

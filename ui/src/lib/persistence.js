@@ -145,12 +145,15 @@ export class PersistenceManager {
     }
 
     async getDrives() {
+        let text = "";
         try {
             const res = await fetch('/api/drives');
             if (!res.ok) return [];
-            return await res.json();
+            text = await res.text();
+            return JSON.parse(text);
         } catch (e) {
             console.error("Get Drives error", e);
+            console.error("Raw response that failed to parse:", text);
             return [];
         }
     }
